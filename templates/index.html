@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>类Rust编译器 — 词法/语法分析器</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── header ── */
+  header {
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+    padding: 0 16px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 1rem; font-weight: 700; color: #a78bfa; white-space: nowrap; }
+  header span { font-size: 0.73rem; color: #4b5563; }
+  .header-spacer { flex: 1; }
+
+  /* ── main layout ── */
+  .workspace {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ════════════════════════════════════
+     EXAMPLES SIDEBAR
+  ════════════════════════════════════ */
+  .sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: #13151f;
+    border-right: 1px solid #2d3148;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width .2s, min-width .2s;
+  }
+  .sidebar.collapsed { width: 0; min-width: 0; border: none; }
+
+  .sidebar-title {
+    background: #1a1d27;
+    padding: 10px 14px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #94a3b8;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #2d3148;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .example-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 6px 0;
+  }
+
+  .ex-group { margin-bottom: 2px; }
+
+  .ex-group-header {
+    padding: 6px 12px 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #4b5563;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    user-select: none;
+  }
+
+  .ex-item {
+    display: flex;
+    flex-direction: column;
+    padding: 7px 14px 7px 20px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background .12s, border-color .12s;
+    gap: 2px;
+  }
+  .ex-item:hover { background: #1e2133; }
+  .ex-item.active {
+    background: #1e1a3a;
+    border-left-color: #7c3aed;
+  }
+  .ex-name {
+    font-family: monospace;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #c4b5fd;
+  }
+  .ex-item.active .ex-name { color: #a78bfa; }
+  .ex-desc {
+    font-size: 0.7rem;
+    color: #4b5563;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 210px;
+  }
+
+  /* ── left panel: editor ── */
+  .editor-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 42%;
+    min-width: 300px;
+    border-right: 1px solid #2d3148;
+  }
+
+  .panel-title {
+    background: #1a1d27;
+    padding: 8px 14px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #94a3b8;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #2d3148;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .panel-title .file-label {
+    font-size: 0.72rem;
+    color: #4b5563;
+    font-weight: 400;
+    margin-left: auto;
+    font-family: monospace;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  #source {
+    flex: 1;
+    background: #0d1117;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.87rem;
+    line-height: 1.65;
+    padding: 14px;
+    border: none;
+    resize: none;
+    outline: none;
+    tab-size: 4;
+  }
+
+  .btn-row {
+    padding: 8px 12px;
+    background: #1a1d27;
+    border-top: 1px solid #2d3148;
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: center;
+  }
+
+  .btn {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 600;
+    transition: opacity .15s, background .15s;
+    white-space: nowrap;
+  }
+  .btn:hover { opacity: .85; }
+  .btn-primary  { background: #7c3aed; color: #fff; }
+  .btn-ghost    { background: #1e293b; color: #94a3b8; }
+  .btn-toggle   { background: #1e293b; color: #a78bfa; }
+  .btn-toggle.active { background: #2e1f5e; color: #c4b5fd; }
+
+  .shortcut { font-size: 0.68rem; color: #374151; margin-left: auto; }
+
+  /* ── right panel: results ── */
+  .result-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* tabs */
+  .tabs {
+    display: flex;
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+    flex-shrink: 0;
+  }
+  .tab {
+    padding: 9px 16px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #64748b;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color .15s;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .tab:hover { color: #cbd5e1; }
+  .tab.active { color: #a78bfa; border-bottom-color: #7c3aed; }
+
+  .tab-badge {
+    display: inline-block;
+    background: #ef4444;
+    color: #fff;
+    border-radius: 10px;
+    font-size: 0.63rem;
+    padding: 1px 6px;
+    margin-left: 5px;
+    vertical-align: middle;
+  }
+  .tab-badge.ok { background: #22c55e; }
+
+  /* tab content */
+  .tab-content { display: none; flex: 1; overflow: auto; }
+  .tab-content.active { display: flex; flex-direction: column; }
+
+  /* ── token table ── */
+  .token-table-wrap { overflow: auto; flex: 1; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.79rem;
+    font-family: monospace;
+  }
+  th {
+    background: #1a1d27;
+    color: #64748b;
+    font-weight: 700;
+    padding: 8px 12px;
+    text-align: left;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    border-bottom: 1px solid #2d3148;
+  }
+  td { padding: 5px 12px; border-bottom: 1px solid #1a1d27; }
+  tr:hover td { background: #1a1d27; }
+
+  .tt-KEYWORD { color: #c084fc; }
+  .tt-IDENT   { color: #60a5fa; }
+  .tt-NUM     { color: #f59e0b; }
+  .tt-OP      { color: #34d399; }
+  .tt-DELIM   { color: #fb923c; }
+  .tt-SEP     { color: #94a3b8; }
+  .tt-SPECIAL { color: #f472b6; }
+  .tt-default { color: #e2e8f0; }
+
+  /* ── AST tree ── */
+  #ast-tab { padding: 12px; }
+  .tree { font-family: monospace; font-size: 0.88rem; line-height: 1.8; }
+  .tree-node { cursor: pointer; user-select: none; }
+  .tree-node:hover > .tree-label { background: #1e293b; border-radius: 3px; }
+  .tree-label { display: inline-block; padding: 1px 5px; border-radius: 3px; }
+  .tree-children { margin-left: 20px; border-left: 1px solid #334155; padding-left: 10px; }
+  .tree-children.collapsed { display: none; }
+  .node-type   { color: #c4b5fd; font-weight: 700; }
+  .node-inline { color: #fbbf24; font-weight: 600; margin-left: 3px; }
+  .node-key    { color: #94a3b8; }
+  .node-val    { color: #fbbf24; }
+  .node-str    { color: #6ee7b7; }
+  .node-bool   { color: #93c5fd; }
+  .node-null   { color: #64748b; font-style: italic; }
+  .node-arr    { color: #94a3b8; }
+  .toggler     { color: #64748b; font-size: 0.72rem; margin-right: 4px; }
+
+  /* ── source highlight ── */
+  .source-wrapper { flex: 2; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  #source-hl {
+    flex: 1;
+    display: none;
+    margin: 0;
+    padding: 14px;
+    background: #0d1117;
+    color: #4b5563;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.87rem;
+    line-height: 1.65;
+    white-space: pre;
+    overflow: auto;
+    cursor: text;
+    tab-size: 4;
+  }
+  .edit-hint {
+    position: absolute;
+    bottom: 8px;
+    right: 10px;
+    font-size: 0.68rem;
+    color: #374151;
+    background: #1a1d27;
+    padding: 2px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    display: none;
+  }
+
+  /* ── errors tab ── */
+  #err-tab { padding: 14px; gap: 8px; }
+  .err-section { margin-bottom: 12px; }
+  .err-title { font-size: 0.72rem; font-weight: 700; color: #94a3b8;
+               text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .err-item {
+    background: #1e1828;
+    border-left: 3px solid #ef4444;
+    padding: 8px 12px;
+    border-radius: 0 5px 5px 0;
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+  }
+  .err-item.sem { border-color: #f59e0b; }
+  .err-loc { color: #4b5563; font-size: 0.72rem; margin-top: 2px; }
+  .no-err { color: #22c55e; font-size: 0.83rem; }
+
+  /* ── error line underline in source highlight ── */
+  .err-line { text-decoration: underline wavy #ef4444; text-underline-offset: 4px; }
+
+  /* ── IR (四元式) table ── */
+  .ir-table-wrap { overflow: auto; flex: 1; }
+  .ir-table { font-size: 0.79rem; font-family: monospace; }
+  .ir-op     { color: #c084fc; font-weight: 700; }
+  .ir-arg    { color: #60a5fa; }
+  .ir-imm    { color: #f59e0b; }
+  .ir-label  { color: #f472b6; }
+  .ir-dash   { color: #374151; }
+  .ir-result { color: #6ee7b7; }
+
+  /* ── MIPS code block ── */
+  #mips-tab { padding: 0; }
+  #mips-code {
+    flex: 1;
+    margin: 0;
+    padding: 14px;
+    background: #0d1117;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.82rem;
+    line-height: 1.7;
+    overflow: auto;
+    white-space: pre;
+    color: #94a3b8;
+  }
+  .mips-dir   { color: #64748b; }
+  .mips-label { color: #f472b6; font-weight: 700; }
+  .mips-instr { color: #c084fc; font-weight: 600; }
+  .mips-reg   { color: #60a5fa; }
+  .mips-imm   { color: #f59e0b; }
+  .mips-comment { color: #374151; font-style: italic; }
+
+  .placeholder {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #374151;
+    font-size: 0.88rem;
+  }
+
+  /* ── execution panel ── */
+  .exec-panel {
+    background: #13151f;
+    border-top: 1px solid #2d3148;
+    padding: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* left: function list */
+  .exec-func-list {
+    width: 160px;
+    min-width: 140px;
+    flex-shrink: 0;
+    border-right: 1px solid #2d3148;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 6px 0;
+  }
+  .exec-func-list-empty {
+    padding: 14px 12px;
+    font-size: 0.75rem;
+    color: #374151;
+    font-style: italic;
+  }
+  .exec-func-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: background .1s, border-color .1s;
+    flex-shrink: 0;
+  }
+  .exec-func-item:hover { background: #1e2133; }
+  .exec-func-item.active { background: #1a1535; border-left-color: #7c3aed; }
+  .exec-func-name {
+    display: block;
+    font-family: monospace;
+    font-size: 0.83rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .exec-func-item.active .exec-func-name { color: #c4b5fd; }
+  .exec-func-ret {
+    display: block;
+    font-family: monospace;
+    font-size: 0.7rem;
+    color: #64748b;
+    margin-top: 2px;
+  }
+
+  /* right: params + run + result */
+  .exec-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 14px;
+    gap: 10px;
+    overflow: auto;
+    min-width: 0;
+  }
+  .exec-param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .exec-param-label {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    font-family: monospace;
+    white-space: nowrap;
+    min-width: 60px;
+  }
+  .exec-param-label b { color: #cbd5e1; }
+  .exec-param-input {
+    background: #0d1117;
+    color: #e2e8f0;
+    border: 1px solid #2d3148;
+    border-radius: 4px;
+    padding: 5px 9px;
+    font-size: 0.83rem;
+    font-family: monospace;
+    width: 88px;
+    outline: none;
+    flex-shrink: 0;
+  }
+  .exec-param-input:focus { border-color: #4c1d95; }
+  .exec-param-input.wide { width: 150px; }
+  .exec-bottom {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: auto;
+  }
+  .exec-result-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: monospace;
+    font-size: 1rem;
+  }
+  .exec-result-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #64748b;
+    letter-spacing: .03em;
+  }
+  .exec-result-ok   { color: #6ee7b7; font-weight: 700; font-size: 1.25rem; }
+  .exec-result-void { color: #4b5563; font-style: italic; font-size: 1rem; }
+  .exec-result-err  { color: #f87171; font-size: 1rem; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>类Rust 词法/语法分析器</h1>
+  <span>同济大学 · 编译原理大作业1 · LALR(1)</span>
+  <div class="header-spacer"></div>
+</header>
+
+<div class="workspace">
+
+  <!-- ── sidebar: example files ── -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-title">📂 示例库 (0.1 ~ 9.3)</div>
+    <div class="example-list" id="example-list">
+      <div style="padding:16px;color:#374151;font-size:0.8rem">加载中…</div>
+    </div>
+  </div>
+
+  <!-- ── left: editor ── -->
+  <div class="editor-panel">
+    <div class="panel-title">
+      📝 源代码
+      <span class="file-label" id="current-file"></span>
+    </div>
+    <div class="source-wrapper">
+      <textarea id="source" spellcheck="false" placeholder="// 输入类Rust代码，或从左侧示例库选择文件
+// 快捷键: Ctrl+Enter 运行分析
+
+fn main() {
+    let mut x: i32 = 1;
+    x = x + 1;
+}
+#"></textarea>
+      <pre id="source-hl" onclick="enterEdit()" title="点击返回编辑"></pre>
+      <div class="edit-hint" id="edit-hint">✏ 点击可编辑</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-toggle active" id="sidebar-btn" onclick="toggleSidebar()" title="示例库">📂 示例库</button>
+      <button class="btn btn-primary" onclick="analyse()">▶ 分析</button>
+      <button class="btn btn-ghost" onclick="clearAll()">清空</button>
+      <span class="shortcut">Ctrl+Enter 快速分析</span>
+    </div>
+    <div class="exec-panel" id="exec-panel">
+      <div class="exec-func-list" id="exec-func-list">
+        <div class="exec-func-list-empty">点击「分析」后显示函数</div>
+      </div>
+      <div class="exec-right">
+        <div id="exec-arg-area"></div>
+        <div class="exec-bottom">
+          <button class="btn btn-primary" id="exec-run-btn" style="padding:5px 14px;font-size:0.83rem;opacity:0.4;cursor:default" onclick="runFunc()" disabled>▶ 运行</button>
+          <div class="exec-result-row">
+            <span class="exec-result-label">结果</span>
+            <span id="exec-out"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── right: results ── -->
+  <div class="result-panel">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('token-tab',this)">
+        Token 流 <span id="badge-token" class="tab-badge ok">0</span>
+      </div>
+      <div class="tab" onclick="switchTab('ast-tab',this)">
+        语法树 (AST)
+      </div>
+      <div class="tab" onclick="switchTab('err-tab',this)">
+        错误 <span id="badge-err" class="tab-badge ok">0</span>
+      </div>
+      <div class="tab" onclick="switchTab('ir-tab',this)">
+        四元式
+      </div>
+      <div class="tab" onclick="switchTab('mips-tab',this)">
+        MIPS
+      </div>
+    </div>
+
+    <div id="token-tab" class="tab-content active">
+      <div class="token-table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>类型</th><th>值</th><th>行</th><th>列</th></tr></thead>
+          <tbody id="token-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="ast-tab" class="tab-content">
+      <div id="ast-container" class="tree">
+        <div class="placeholder">点击「分析」后显示语法树</div>
+      </div>
+    </div>
+
+    <div id="err-tab" class="tab-content">
+      <div id="err-container">
+        <div class="placeholder">点击「分析」后显示错误信息</div>
+      </div>
+    </div>
+
+    <div id="ir-tab" class="tab-content">
+      <div class="ir-table-wrap">
+        <table class="ir-table">
+          <thead><tr><th>#</th><th>op</th><th>arg1</th><th>arg2</th><th>result</th></tr></thead>
+          <tbody id="ir-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="mips-tab" class="tab-content">
+      <pre id="mips-code"><span style="color:#374151">点击「分析」后显示 MIPS 汇编</span></pre>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let _execFuncs = [];
+
+// ════════════════════════════════════════════════════
+// SIDEBAR
+// ════════════════════════════════════════════════════
+
+let sidebarOpen = true;
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+  document.getElementById('sidebar-btn').classList.toggle('active', sidebarOpen);
+}
+
+// Load example file list from backend
+async function loadExampleList() {
+  const res = await fetch('/api/examples');
+  const files = await res.json();
+
+  // Group by major rule number (0.x → "0.x", 1.x → "1.x" …)
+  const groups = {};
+  for (const f of files) {
+    const major = f.name.split('.')[0];
+    if (!groups[major]) groups[major] = [];
+    groups[major].push(f);
+  }
+
+  const RULE_DESC = {
+    '0': '基础构件', '1': '函数结构', '2': '变量声明',
+    '3': '表达式',  '4': '条件语句', '5': '循环语句',
+    '6': '引用借用', '7': '块表达式', '8': '数组',
+    '9': '元组',
+  };
+
+  const container = document.getElementById('example-list');
+  container.innerHTML = '';
+
+  for (const [major, items] of Object.entries(groups)) {
+    const grp = document.createElement('div');
+    grp.className = 'ex-group';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'ex-group-header';
+    hdr.textContent = `规则 ${major}.x  ${RULE_DESC[major] || ''}`;
+    grp.appendChild(hdr);
+
+    for (const f of items) {
+      const item = document.createElement('div');
+      item.className = 'ex-item';
+      item.dataset.name = f.name;
+      item.innerHTML = `
+        <span class="ex-name">${f.name}</span>
+        <span class="ex-desc">${escHtml(f.desc)}</span>`;
+      item.onclick = () => loadExampleFile(f.name, item);
+      grp.appendChild(item);
+    }
+    container.appendChild(grp);
+  }
+}
+
+async function loadExampleFile(filename, el) {
+  document.querySelectorAll('.ex-item').forEach(i => i.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const res = await fetch(`/api/examples/${encodeURIComponent(filename)}`);
+  const data = await res.json();
+  document.getElementById('source').value = data.content;
+  document.getElementById('current-file').textContent = filename;
+  clearResults();
+}
+
+function clearResults() {
+  enterEdit();
+  document.getElementById('token-body').innerHTML = '';
+  document.getElementById('ast-container').innerHTML = '<div class="placeholder">点击「分析」后显示语法树</div>';
+  document.getElementById('err-container').innerHTML = '<div class="placeholder">点击「分析」后显示错误信息</div>';
+  document.getElementById('ir-body').innerHTML = '';
+  document.getElementById('mips-code').innerHTML = '<span style="color:#374151">点击「分析」后显示 MIPS 汇编</span>';
+  document.getElementById('badge-token').textContent = '0';
+  document.getElementById('badge-err').textContent = '0';
+  document.getElementById('badge-token').className = 'tab-badge ok';
+  document.getElementById('badge-err').className = 'tab-badge ok';
+  const _btn = document.getElementById('exec-run-btn');
+  document.getElementById('exec-func-list').innerHTML = '<div class="exec-func-list-empty">点击「分析」后显示函数</div>';
+  _btn.disabled = true; _btn.style.opacity = '0.4'; _btn.style.cursor = 'default';
+  document.getElementById('exec-arg-area').innerHTML = '';
+  document.getElementById('exec-out').textContent = '';
+  _execFuncs = []; _selectedFunc = 0;
+}
+
+// ════════════════════════════════════════════════════
+// TAB SWITCHING
+// ════════════════════════════════════════════════════
+
+function switchTab(id, el) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  el.classList.add('active');
+}
+
+// ════════════════════════════════════════════════════
+// SOURCE HIGHLIGHT
+// ════════════════════════════════════════════════════
+
+function highlightSource(source, tokens, errors) {
+  // Lines that have errors get a wavy red underline
+  const errLines = new Set();
+  for (const e of (errors || [])) { if (e.line) errLines.add(e.line); }
+
+  // Build map: "line:col" → token
+  const posMap = new Map();
+  for (const t of tokens) posMap.set(`${t.line}:${t.col}`, t);
+
+  const lines = source.split('\n');
+  let html = '';
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const lineNum = li + 1;
+    let lineHtml = '';
+    let ci = 0;
+
+    while (ci < line.length) {
+      const key = `${lineNum}:${ci + 1}`;
+      if (posMap.has(key)) {
+        const tok = posMap.get(key);
+        const cls = tokenClass(tok.type);
+        lineHtml += `<span class="${cls}" style="font-weight:600">${escHtml(tok.value)}</span>`;
+        ci += tok.value.length;
+      } else {
+        lineHtml += escHtml(line[ci]);
+        ci++;
+      }
+    }
+
+    html += errLines.has(lineNum) ? `<span class="err-line">${lineHtml}</span>` : lineHtml;
+    if (li < lines.length - 1) html += '\n';
+  }
+  return html;
+}
+
+function showHighlight(html) {
+  const ta = document.getElementById('source');
+  const pre = document.getElementById('source-hl');
+  const hint = document.getElementById('edit-hint');
+  pre.innerHTML = html;
+  ta.style.display = 'none';
+  pre.style.display = 'block';
+  hint.style.display = 'block';
+}
+
+function enterEdit() {
+  const ta = document.getElementById('source');
+  const pre = document.getElementById('source-hl');
+  const hint = document.getElementById('edit-hint');
+  pre.style.display = 'none';
+  hint.style.display = 'none';
+  ta.style.display = 'block';
+  ta.focus();
+}
+
+// ════════════════════════════════════════════════════
+// ANALYSE
+// ════════════════════════════════════════════════════
+
+async function analyse() {
+  const source = document.getElementById('source').value;
+  const res = await fetch('/api/analyse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  });
+  const data = await res.json();
+
+  renderTokens(data.tokens);
+  renderAST(data.ast);
+  renderErrors(data.lex_errors, data.parse_errors, data.sem_errors);
+  renderIR(data.ir);
+  renderMIPS(data.mips);
+  setupExec(data.funcs);
+
+  const errCount = (data.lex_errors||[]).length +
+                   (data.parse_errors||[]).length +
+                   (data.sem_errors||[]).length;
+
+  const allErrors = [...(data.lex_errors||[]), ...(data.parse_errors||[]), ...(data.sem_errors||[])];
+  showHighlight(highlightSource(source, data.tokens, allErrors));
+  if (errCount > 0) {
+    switchTab('err-tab', document.querySelector('[onclick*="err-tab"]'));
+  }
+
+  const badge = document.getElementById('badge-err');
+  badge.textContent = errCount;
+  badge.className = 'tab-badge' + (errCount ? '' : ' ok');
+
+  const tb = document.getElementById('badge-token');
+  tb.textContent = data.tokens.length;
+  tb.className = 'tab-badge ok';
+}
+
+// ════════════════════════════════════════════════════
+// TOKEN TABLE
+// ════════════════════════════════════════════════════
+
+const KEYWORDS = new Set(['I32','LET','IF','ELSE','WHILE','RETURN',
+  'MUT','FN','FOR','IN','LOOP','BREAK','CONTINUE']);
+const OPS    = new Set(['PLUS','MINUS','STAR','SLASH','EQ','NEQ','GEQ','LEQ','GT','LT','ASSIGN','AMP','AND']);
+const DELIMS = new Set(['LPAREN','RPAREN','LBRACE','RBRACE','LBRACKET','RBRACKET']);
+const SEPS   = new Set(['SEMI','COLON','COMMA']);
+const SPECS  = new Set(['ARROW','DOT','DOTDOT']);
+
+function tokenClass(t) {
+  if (KEYWORDS.has(t)) return 'tt-KEYWORD';
+  if (t === 'IDENT')   return 'tt-IDENT';
+  if (t === 'NUM')     return 'tt-NUM';
+  if (OPS.has(t))      return 'tt-OP';
+  if (DELIMS.has(t))   return 'tt-DELIM';
+  if (SEPS.has(t))     return 'tt-SEP';
+  if (SPECS.has(t))    return 'tt-SPECIAL';
+  return 'tt-default';
+}
+
+function renderTokens(tokens) {
+  const tbody = document.getElementById('token-body');
+  tbody.innerHTML = '';
+  tokens.forEach((t, i) => {
+    const cls = tokenClass(t.type);
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td style="color:#374151">${i+1}</td>
+      <td class="${cls}">${t.type}</td>
+      <td style="font-weight:600;color:#e2e8f0">${escHtml(t.value)}</td>
+      <td style="color:#4b5563">${t.line}</td>
+      <td style="color:#4b5563">${t.col}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+// ════════════════════════════════════════════════════
+// AST TREE
+// ════════════════════════════════════════════════════
+
+function renderAST(ast) {
+  const c = document.getElementById('ast-container');
+  if (!ast) {
+    c.innerHTML = '<div class="placeholder">语法树构建失败（存在语法错误）</div>';
+    return;
+  }
+  c.innerHTML = '';
+  c.appendChild(buildTree(ast, ''));
+}
+
+// Fields to show inline in node label for quick scanning
+const INLINE_FIELD = {
+  FunctionDecl: 'name', Param: 'name',
+  Identifier: 'name',   LetStmt: 'name',
+  NumLiteral: 'value',
+  BinaryOp: 'op',       UnaryOp: 'op',
+  TupleFieldExpr: 'field', TypeArray: 'size',
+  AssignStmt: null,     ReturnStmt: null,
+};
+
+// Fields to skip in child list (already shown inline or noise)
+const SKIP_FIELDS = new Set(['lineno', 'lexpos']);
+
+function buildTree(node, key) {
+  const wrap = document.createElement('div');
+  wrap.className = 'tree-node';
+
+  if (node === null || node === undefined) {
+    wrap.innerHTML = `<span class="tree-label"><span class="node-key">${key ? key+': ' : ''}</span><span class="node-null">∅</span></span>`;
+    return wrap;
+  }
+  if (typeof node !== 'object') {
+    const cls = typeof node === 'boolean' ? 'node-bool' : (typeof node === 'number' ? 'node-val' : 'node-str');
+    const disp = typeof node === 'string' ? `"${escHtml(node)}"` : String(node);
+    wrap.innerHTML = `<span class="tree-label"><span class="node-key">${key ? key+': ' : ''}</span><span class="${cls}">${disp}</span></span>`;
+    return wrap;
+  }
+  if (Array.isArray(node)) {
+    if (node.length === 0) {
+      wrap.innerHTML = `<span class="tree-label"><span class="node-key">${key ? key+': ' : ''}</span><span class="node-null">[ ]</span></span>`;
+      return wrap;
+    }
+    const label = document.createElement('span');
+    label.className = 'tree-label';
+    label.innerHTML = `<span class="toggler">▼</span><span class="node-key">${key ? key+': ' : ''}</span><span class="node-arr">[ ${node.length} ]</span>`;
+    const children = document.createElement('div');
+    children.className = 'tree-children';
+    node.forEach((item, i) => children.appendChild(buildTree(item, String(i))));
+    label.onclick = e => { e.stopPropagation(); toggle(label, children); };
+    wrap.appendChild(label); wrap.appendChild(children);
+    return wrap;
+  }
+
+  // Object node
+  const nodeType = node.type || 'Object';
+  const keyStr = key ? `<span class="node-key">${key}: </span>` : '';
+
+  // Build inline annotation (e.g. BinaryOp → show op value)
+  let inlineHtml = '';
+  if (nodeType in INLINE_FIELD) {
+    const f = INLINE_FIELD[nodeType];
+    if (f && node[f] !== undefined && node[f] !== null) {
+      inlineHtml = `<span class="node-inline">(${escHtml(String(node[f]))})</span>`;
+    }
+  }
+
+  // Check if node has no meaningful children (leaf-like)
+  const childEntries = Object.entries(node).filter(([k, v]) => {
+    if (k === 'type') return false;
+    if (SKIP_FIELDS.has(k)) return false;
+    if (v === null || v === undefined) return false;
+    if (Array.isArray(v) && v.length === 0) return false;
+    // already shown inline
+    if (INLINE_FIELD[nodeType] === k) return false;
+    return true;
+  });
+
+  if (childEntries.length === 0) {
+    // Leaf node — no toggler needed
+    wrap.innerHTML = `<span class="tree-label">${keyStr}<span class="node-type">${nodeType}</span>${inlineHtml}</span>`;
+    return wrap;
+  }
+
+  const label = document.createElement('span');
+  label.className = 'tree-label';
+  label.innerHTML = `<span class="toggler">▼</span>${keyStr}<span class="node-type">${nodeType}</span>${inlineHtml}`;
+
+  const children = document.createElement('div');
+  children.className = 'tree-children';
+  for (const [k, v] of childEntries) {
+    children.appendChild(buildTree(v, k));
+  }
+
+  label.onclick = e => { e.stopPropagation(); toggle(label, children); };
+  wrap.appendChild(label); wrap.appendChild(children);
+  return wrap;
+}
+
+function toggle(label, children) {
+  const tog = label.querySelector('.toggler');
+  const collapsed = children.classList.toggle('collapsed');
+  tog.textContent = collapsed ? '▶' : '▼';
+}
+
+// ════════════════════════════════════════════════════
+// IR TABLE (四元式)
+// ════════════════════════════════════════════════════
+
+function renderIR(quads) {
+  const tbody = document.getElementById('ir-body');
+  tbody.innerHTML = '';
+  if (!quads || quads.length === 0) return;
+
+  quads.forEach((q, i) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td style="color:#374151">${i}</td>
+      <td class="ir-op">${escHtml(q.op)}</td>
+      <td>${irArgHtml(q.arg1)}</td>
+      <td>${irArgHtml(q.arg2)}</td>
+      <td>${irResultHtml(q.result, q.op)}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+function irArgHtml(v) {
+  if (v === '_') return `<span class="ir-dash">_</span>`;
+  if (/^-?\d+$/.test(v)) return `<span class="ir-imm">${escHtml(v)}</span>`;
+  if (/^L\d+$/.test(v))  return `<span class="ir-label">${escHtml(v)}</span>`;
+  return `<span class="ir-arg">${escHtml(v)}</span>`;
+}
+
+function irResultHtml(v, op) {
+  if (v === '_') return `<span class="ir-dash">_</span>`;
+  if (/^L\d+$/.test(v))  return `<span class="ir-label">${escHtml(v)}</span>`;
+  if (op === 'label') return `<span class="ir-label">${escHtml(v)}:</span>`;
+  return `<span class="ir-result">${escHtml(v)}</span>`;
+}
+
+// ════════════════════════════════════════════════════
+// MIPS CODE BLOCK
+// ════════════════════════════════════════════════════
+
+const MIPS_INSTRS = new Set([
+  'add','addu','addiu','sub','subu','mul','mult','div','mflo','mfhi',
+  'and','or','xor','xori','nor','slt','sltu','sltiu',
+  'lw','sw','lh','sh','lb','sb','li','la','move',
+  'beq','bne','blt','bgt','ble','bge','j','jal','jr',
+  'sll','srl','sra','nop','syscall',
+]);
+
+function renderMIPS(asm) {
+  const pre = document.getElementById('mips-code');
+  if (!asm) { pre.innerHTML = '<span style="color:#374151">无 MIPS 输出</span>'; return; }
+
+  const html = asm.split('\n').map(line => {
+    // comment
+    const ci = line.indexOf('#');
+    const code = ci >= 0 ? line.slice(0, ci) : line;
+    const comment = ci >= 0 ? line.slice(ci) : '';
+
+    let out = '';
+    const trimmed = code.trim();
+
+    if (trimmed === '') {
+      // blank line
+    } else if (trimmed.startsWith('.')) {
+      // directive
+      out = `<span class="mips-dir">${escHtml(code)}</span>`;
+    } else if (/^\S+:$/.test(trimmed)) {
+      // label line
+      out = `<span class="mips-label">${escHtml(code)}</span>`;
+    } else {
+      // instruction line: tokenise
+      out = code.replace(/(\S+)/g, (tok) => {
+        if (tok.endsWith(':'))   return `<span class="mips-label">${escHtml(tok)}</span>`;
+        if (MIPS_INSTRS.has(tok.replace(',','')))
+                                 return `<span class="mips-instr">${escHtml(tok)}</span>`;
+        if (tok.startsWith('$')) return `<span class="mips-reg">${escHtml(tok.replace(',',''))}</span>${tok.endsWith(',') ? ',' : ''}`;
+        if (/^-?\d+/.test(tok)) return `<span class="mips-imm">${escHtml(tok)}</span>`;
+        return escHtml(tok);
+      });
+    }
+    if (comment) out += `<span class="mips-comment">${escHtml(comment)}</span>`;
+    return out;
+  }).join('\n');
+
+  pre.innerHTML = html;
+}
+
+// ════════════════════════════════════════════════════
+// ERRORS
+// ════════════════════════════════════════════════════
+
+function renderErrors(lexErrs, parseErrs, semErrs) {
+  const c = document.getElementById('err-container');
+  const total = (lexErrs||[]).length + (parseErrs||[]).length + (semErrs||[]).length;
+  if (total === 0) {
+    c.innerHTML = '<div style="padding:20px"><div class="no-err">✓ 无错误</div></div>';
+    return;
+  }
+  let html = '';
+  const section = (title, items, cls) => {
+    if (!items || !items.length) return '';
+    return `<div class="err-section">
+      <div class="err-title">${title} (${items.length})</div>
+      ${items.map(e => `<div class="err-item ${cls}">${escHtml(e.msg)}<div class="err-loc">行 ${e.line||'?'}${e.col ? ' 列 '+e.col : ''}</div></div>`).join('')}
+    </div>`;
+  };
+  html += section('词法错误', lexErrs, '');
+  html += section('语法错误', parseErrs, '');
+  html += section('语义错误', semErrs, 'sem');
+  c.innerHTML = `<div style="padding:14px">${html}</div>`;
+}
+
+// ════════════════════════════════════════════════════
+// EXECUTION PANEL
+// ════════════════════════════════════════════════════
+
+let _selectedFunc = 0;
+
+function setupExec(funcs) {
+  _execFuncs = funcs || [];
+  _selectedFunc = 0;
+  const list = document.getElementById('exec-func-list');
+  const btn  = document.getElementById('exec-run-btn');
+  if (_execFuncs.length === 0) {
+    list.innerHTML = '<div class="exec-func-list-empty">点击「分析」后显示函数</div>';
+    btn.disabled = true; btn.style.opacity = '0.4'; btn.style.cursor = 'default';
+    document.getElementById('exec-arg-area').innerHTML = '';
+    return;
+  }
+  list.innerHTML = '';
+  _execFuncs.forEach((f, i) => {
+    const item = document.createElement('div');
+    item.className = 'exec-func-item' + (i === 0 ? ' active' : '');
+    const retLabel = f.has_return ? '→ i32' : '→ ()';
+    const paramSig = f.params.map(p => `${p.name}: ${p.type}`).join(', ');
+    item.innerHTML = `<span class="exec-func-name">${escHtml(f.name)}</span>
+      <span class="exec-func-ret">(${escHtml(paramSig)}) ${retLabel}</span>`;
+    item.onclick = () => selectFunc(i);
+    list.appendChild(item);
+  });
+  btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+  document.getElementById('exec-out').textContent = '';
+  renderExecParams(0);
+}
+
+function selectFunc(i) {
+  _selectedFunc = i;
+  document.querySelectorAll('.exec-func-item').forEach((el, j) =>
+    el.classList.toggle('active', j === i));
+  document.getElementById('exec-out').textContent = '';
+  renderExecParams(i);
+}
+
+function renderExecParams(i) {
+  const fn   = _execFuncs[i];
+  const area = document.getElementById('exec-arg-area');
+  area.innerHTML = '';
+  if (!fn || fn.params.length === 0) return;
+  const row = document.createElement('div');
+  row.className = 'exec-param-row';
+  for (const p of fn.params) {
+    const label = document.createElement('span');
+    label.className = 'exec-param-label';
+    label.innerHTML = `<b>${escHtml(p.name)}</b>: ${escHtml(p.type)}`;
+    const inp = document.createElement('input');
+    const wide = p.type.startsWith('[') || p.type.startsWith('(');
+    inp.className = 'exec-param-input' + (wide ? ' wide' : '');
+    inp.dataset.ptype = p.type;
+    inp.placeholder = p.type;
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') runFunc(); });
+    row.appendChild(label);
+    row.appendChild(inp);
+  }
+  area.appendChild(row);
+}
+
+function onFuncChange() {} // kept for compatibility
+
+function parseArgValue(raw, ptype) {
+  raw = raw.trim();
+  if (ptype.startsWith('[') || ptype.startsWith('(')) {
+    raw = raw.replace(/^[\[\(]/, '').replace(/[\]\)]$/, '');
+    return raw === '' ? [] : raw.split(',').map(x => parseInt(x.trim()) || 0);
+  }
+  return parseInt(raw) || 0;
+}
+
+async function runFunc() {
+  const fn = _execFuncs[_selectedFunc];
+  if (!fn) return;
+  const area = document.getElementById('exec-arg-area');
+  const inputs = area.querySelectorAll('input');
+  const args = Array.from(inputs).map(inp => parseArgValue(inp.value, inp.dataset.ptype));
+  const source = document.getElementById('source').value;
+  const out = document.getElementById('exec-out');
+  out.textContent = '…'; out.className = 'exec-result-void';
+  try {
+    const res = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, func: fn.name, args }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      out.textContent = data.error; out.className = 'exec-result-err';
+    } else if (data.result === null) {
+      out.textContent = '无返回值'; out.className = 'exec-result-void';
+    } else {
+      out.textContent = Array.isArray(data.result) ? JSON.stringify(data.result) : String(data.result);
+      out.className = 'exec-result-ok';
+    }
+  } catch {
+    out.textContent = '网络错误'; out.className = 'exec-result-err';
+  }
+}
+
+// ════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function clearAll() {
+  document.getElementById('source').value = '';
+  document.getElementById('current-file').textContent = '';
+  document.querySelectorAll('.ex-item').forEach(i => i.classList.remove('active'));
+  clearResults();
+}
+
+// Ctrl+Enter to analyse
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); analyse(); }
+});
+
+// Init
+loadExampleList();
+</script>
+</body>
+</html>
