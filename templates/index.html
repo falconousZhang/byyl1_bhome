@@ -19,16 +19,16 @@
   /* ── header ── */
   header {
     background: #1a1d27;
-    border-bottom: 1px solid #2d3148;
-    padding: 0 16px;
-    height: 44px;
+    border-bottom: 2px solid #3b2f6e;
+    padding: 0 20px;
+    height: 54px;
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 20px;
     flex-shrink: 0;
   }
-  header h1 { font-size: 1rem; font-weight: 700; color: #a78bfa; white-space: nowrap; }
-  header span { font-size: 0.73rem; color: #4b5563; }
+  header h1 { font-size: 1.2rem; font-weight: 800; color: #c4b5fd; white-space: nowrap; letter-spacing: .01em; }
+  header span { font-size: 0.82rem; color: #64748b; }
   .header-spacer { flex: 1; }
 
   /* ── main layout ── */
@@ -496,6 +496,121 @@
   .exec-result-void { color: #4b5563; font-style: italic; font-size: 1rem; }
   .exec-result-err  { color: #f87171; font-size: 1rem; }
 
+  /* ── export modal ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .modal-backdrop.hidden { display: none; }
+  .modal {
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 10px;
+    padding: 24px 28px;
+    width: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #e2e8f0;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    color: #4b5563;
+    font-size: 1.2rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .modal-close:hover { background: #2d3148; color: #e2e8f0; }
+  .modal-sect-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 10px;
+  }
+  .modal-check-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .modal-check-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 6px;
+    transition: background .1s;
+  }
+  .modal-check-row:hover { background: #1e293b; }
+  .modal-check-row input[type=checkbox] {
+    width: 15px; height: 15px;
+    accent-color: #7c3aed;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .modal-check-name {
+    font-size: 0.88rem;
+    color: #e2e8f0;
+    flex: 1;
+  }
+  .modal-check-ext {
+    font-size: 0.75rem;
+    color: #4b5563;
+    font-family: monospace;
+  }
+  .modal-dir-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-dir-btn {
+    background: #1e293b;
+    color: #94a3b8;
+    border: 1px solid #2d3148;
+    border-radius: 5px;
+    padding: 5px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .modal-dir-btn:hover { background: #263348; color: #e2e8f0; }
+  .modal-dir-path {
+    font-size: 0.78rem;
+    color: #4b5563;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .modal-dir-path.chosen { color: #94a3b8; }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
   /* scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -508,7 +623,54 @@
   <h1>类Rust 词法/语法分析器</h1>
   <span>同济大学 · 编译原理大作业1 · LALR(1)</span>
   <div class="header-spacer"></div>
+  <button class="btn btn-ghost" style="font-size:0.8rem;padding:5px 12px" onclick="openExport()">⬇ 导出</button>
 </header>
+
+<!-- ── Export Modal ── -->
+<div class="modal-backdrop hidden" id="export-backdrop" onclick="if(event.target===this)closeExport()">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">导出文件</span>
+      <button class="modal-close" onclick="closeExport()">✕</button>
+    </div>
+    <div>
+      <div class="modal-sect-label">选择导出内容</div>
+      <div class="modal-check-list">
+        <label class="modal-check-row">
+          <input type="checkbox" id="exp-src" checked>
+          <span class="modal-check-name">源代码</span>
+          <span class="modal-check-ext">.rs</span>
+        </label>
+        <label class="modal-check-row">
+          <input type="checkbox" id="exp-tok" checked>
+          <span class="modal-check-name">Token 流</span>
+          <span class="modal-check-ext">.json</span>
+        </label>
+        <label class="modal-check-row">
+          <input type="checkbox" id="exp-ir" checked>
+          <span class="modal-check-name">四元式中间代码</span>
+          <span class="modal-check-ext">.txt</span>
+        </label>
+        <label class="modal-check-row">
+          <input type="checkbox" id="exp-asm" checked>
+          <span class="modal-check-name">MIPS 汇编代码</span>
+          <span class="modal-check-ext">.asm</span>
+        </label>
+      </div>
+    </div>
+    <div>
+      <div class="modal-sect-label">保存位置</div>
+      <div class="modal-dir-row">
+        <button class="modal-dir-btn" onclick="pickExportDir()">选择文件夹</button>
+        <span class="modal-dir-path" id="export-dir-label">默认下载目录</span>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeExport()">取消</button>
+      <button class="btn btn-primary" onclick="doExport()">⬇ 导出</button>
+    </div>
+  </div>
+</div>
 
 <div class="workspace">
 
@@ -793,6 +955,7 @@ async function analyse() {
   });
   const data = await res.json();
 
+  _lastData = data;
   renderTokens(data.tokens);
   renderAST(data.ast);
   renderErrors(data.lex_errors, data.parse_errors, data.sem_errors);
@@ -1193,6 +1356,76 @@ function clearAll() {
   document.getElementById('current-file').textContent = '';
   document.querySelectorAll('.ex-item').forEach(i => i.classList.remove('active'));
   clearResults();
+}
+
+// ════════════════════════════════════════════════════
+// EXPORT
+// ════════════════════════════════════════════════════
+
+let _lastData = null;
+let _exportDirHandle = null;
+
+function openExport() {
+  document.getElementById('export-backdrop').classList.remove('hidden');
+}
+function closeExport() {
+  document.getElementById('export-backdrop').classList.add('hidden');
+}
+
+async function pickExportDir() {
+  if (!window.showDirectoryPicker) {
+    document.getElementById('export-dir-label').textContent = '（浏览器不支持，将直接下载）';
+    return;
+  }
+  try {
+    _exportDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const label = document.getElementById('export-dir-label');
+    label.textContent = _exportDirHandle.name;
+    label.className = 'modal-dir-path chosen';
+  } catch {}
+}
+
+function _irToText(quads) {
+  if (!quads || !quads.length) return '';
+  const w = [4, 14, 12, 12, 12];
+  const pad = (s, n) => String(s).padEnd(n);
+  const header = `${pad('#',w[0])}${pad('op',w[1])}${pad('arg1',w[2])}${pad('arg2',w[3])}result\n`
+               + '-'.repeat(w[0]+w[1]+w[2]+w[3]+10) + '\n';
+  return header + quads.map((q, i) =>
+    `${pad(i,w[0])}${pad(q.op,w[1])}${pad(q.arg1,w[2])}${pad(q.arg2,w[3])}${q.result}`
+  ).join('\n');
+}
+
+async function _writeFile(name, content, mime) {
+  if (_exportDirHandle) {
+    const fh = await _exportDirHandle.getFileHandle(name, { create: true });
+    const wr = await fh.createWritable();
+    await wr.write(content); await wr.close();
+  } else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+    a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+}
+
+async function doExport() {
+  const base = (document.getElementById('current-file').textContent || 'output').replace(/\.rs$/, '');
+  const d = _lastData || {};
+  const tasks = [];
+
+  if (document.getElementById('exp-src').checked)
+    tasks.push(_writeFile(`${base}.rs`,   document.getElementById('source').value, 'text/plain'));
+  if (document.getElementById('exp-tok').checked)
+    tasks.push(_writeFile(`${base}_tokens.json`, JSON.stringify(d.tokens || [], null, 2), 'application/json'));
+  if (document.getElementById('exp-ir').checked)
+    tasks.push(_writeFile(`${base}_ir.txt`, _irToText(d.ir), 'text/plain'));
+  if (document.getElementById('exp-asm').checked)
+    tasks.push(_writeFile(`${base}.asm`,  d.mips || '', 'text/plain'));
+
+  await Promise.all(tasks);
+  closeExport();
 }
 
 // Ctrl+Enter to analyse
