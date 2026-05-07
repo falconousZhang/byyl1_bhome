@@ -289,6 +289,24 @@
 
   /* ── source highlight ── */
   .source-wrapper { flex: 2; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  .source-body { flex: 1; display: flex; flex-direction: row; overflow: hidden; min-height: 0; }
+
+  .line-nums {
+    background: #0d1117;
+    border-right: 1px solid #1a2030;
+    color: #64748b;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.87rem;
+    line-height: 1.65;
+    padding: 14px 10px 14px 8px;
+    text-align: right;
+    user-select: none;
+    overflow: hidden;
+    flex-shrink: 0;
+    white-space: pre;
+    min-width: 38px;
+  }
+
   #source-hl {
     flex: 1;
     display: none;
@@ -689,7 +707,9 @@
       <span class="file-label" id="current-file"></span>
     </div>
     <div class="source-wrapper">
-      <textarea id="source" spellcheck="false" placeholder="// 输入类Rust代码，或从左侧示例库选择文件
+      <div class="source-body">
+        <div class="line-nums" id="line-nums">1</div>
+        <textarea id="source" spellcheck="false" placeholder="// 输入类Rust代码，或从左侧示例库选择文件
 // 快捷键: Ctrl+Enter 运行分析
 
 fn main() {
@@ -697,7 +717,8 @@ fn main() {
     x = x + 1;
 }
 #"></textarea>
-      <pre id="source-hl" onclick="enterEdit()" title="点击返回编辑"></pre>
+        <pre id="source-hl" onclick="enterEdit()" title="点击返回编辑"></pre>
+      </div>
       <div class="edit-hint" id="edit-hint">✏ 点击可编辑</div>
     </div>
     <div class="btn-row">
@@ -811,7 +832,7 @@ async function loadExampleList() {
     '0': '基础构件', '1': '函数结构', '2': '变量声明',
     '3': '表达式',  '4': '条件语句', '5': '循环语句',
     '6': '引用借用', '7': '块表达式', '8': '数组',
-    '9': '元组',
+    '9': '元组',   'adv': '进阶示例',
   };
 
   const container = document.getElementById('example-list');
@@ -846,7 +867,10 @@ async function loadExampleFile(filename, el) {
 
   const res = await fetch(`/api/examples/${encodeURIComponent(filename)}`);
   const data = await res.json();
-  document.getElementById('source').value = data.content;
+  const ta = document.getElementById('source');
+  ta.value = data.content;
+  ta.scrollTop = 0;
+  updateLineNums();
   document.getElementById('current-file').textContent = filename;
   clearResults();
 }
@@ -1355,6 +1379,7 @@ function clearAll() {
   document.getElementById('source').value = '';
   document.getElementById('current-file').textContent = '';
   document.querySelectorAll('.ex-item').forEach(i => i.classList.remove('active'));
+  updateLineNums();
   clearResults();
 }
 
@@ -1428,12 +1453,35 @@ async function doExport() {
   closeExport();
 }
 
+// ════════════════════════════════════════════════════
+// LINE NUMBERS
+// ════════════════════════════════════════════════════
+
+function updateLineNums() {
+  const ta  = document.getElementById('source');
+  const ln  = document.getElementById('line-nums');
+  const count = (ta.value.match(/\n/g) || []).length + 1;
+  let s = '';
+  for (let i = 1; i <= count; i++) s += i + '\n';
+  ln.textContent = s;
+}
+
+// Sync scroll: textarea → line-nums, pre → line-nums
+document.getElementById('source').addEventListener('scroll', function () {
+  document.getElementById('line-nums').scrollTop = this.scrollTop;
+});
+document.getElementById('source-hl').addEventListener('scroll', function () {
+  document.getElementById('line-nums').scrollTop = this.scrollTop;
+});
+document.getElementById('source').addEventListener('input', updateLineNums);
+
 // Ctrl+Enter to analyse
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); analyse(); }
 });
 
 // Init
+updateLineNums();
 loadExampleList();
 </script>
 </body>
