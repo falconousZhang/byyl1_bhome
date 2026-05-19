@@ -5,8 +5,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from flask import Flask, request, jsonify, render_template, abort
 from lexer import lex
-from parser import parse
+# from parser import parse  # LALR disabled
 from parser_rd import parse_rd
+from parser_lr1 import parse_lr1
 from semantic import analyse
 from codegen import generate_ir
 # from mips import generate_mips
@@ -25,7 +26,10 @@ app = Flask(
 def _parse(tokens, parser_type):
     if parser_type == 'rd':
         return parse_rd(tokens)
-    return parse(tokens)
+    if parser_type == 'lr1':
+        return parse_lr1(tokens)
+    # return parse(tokens)  # LALR disabled — default falls through to rd
+    return parse_rd(tokens)
 
 
 @app.route('/')

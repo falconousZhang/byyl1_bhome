@@ -773,8 +773,11 @@ fn main() {
       <div class="parser-wrap">
         <span class="parser-wrap-label">解析器</span>
         <div class="parser-sel">
-          <button class="psel-btn active" id="psel-lalr" onclick="setParser('lalr')">LALR(1)</button>
-          <button class="psel-btn" id="psel-rd" onclick="setParser('rd')">递归下降</button>
+          <!-- LALR disabled
+          <button class="psel-btn" id="psel-lalr" onclick="setParser('lalr')">LALR(1)</button>
+          -->
+          <button class="psel-btn active" id="psel-rd" onclick="setParser('rd')">递归下降</button>
+          <button class="psel-btn" id="psel-lr1" onclick="setParser('lr1')">LR(1)</button>
         </div>
       </div>
       <span class="shortcut">Ctrl+Enter 快速分析</span>
@@ -863,12 +866,13 @@ fn main() {
 
 <script>
 let _execFuncs = [];
-let _parserType = 'lalr';
+let _parserType = 'rd'; // LALR disabled, default to rd
 
 function setParser(type) {
   _parserType = type;
-  document.getElementById('psel-lalr').classList.toggle('active', type === 'lalr');
+  // document.getElementById('psel-lalr').classList.toggle('active', type === 'lalr'); // LALR disabled
   document.getElementById('psel-rd').classList.toggle('active', type === 'rd');
+  document.getElementById('psel-lr1').classList.toggle('active', type === 'lr1');
   // if code is currently in highlighted/read-only state, reset to editable
   if (document.getElementById('source-hl').style.display === 'block') {
     enterEdit();
