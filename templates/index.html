@@ -192,6 +192,43 @@
 
   .shortcut { font-size: 0.68rem; color: #374151; margin-left: auto; }
 
+  /* parser toggle */
+  .parser-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .parser-wrap-label {
+    font-size: 0.7rem;
+    color: #a78bfa;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+  }
+  .parser-sel {
+    display: flex;
+    border: 1.5px solid #7c3aed;
+    border-radius: 7px;
+    overflow: hidden;
+    box-shadow: 0 0 10px rgba(124,58,237,0.4);
+  }
+  .psel-btn {
+    background: #130d2b;
+    color: #7c5cbf;
+    border: none;
+    padding: 5px 15px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+    letter-spacing: 0.04em;
+  }
+  .psel-btn + .psel-btn { border-left: 1px solid #4c1d95; }
+  .psel-btn:hover:not(.active) { background: #1e1040; color: #a78bfa; }
+  .psel-btn.active { background: #4c1d95; color: #e9d5ff; text-shadow: 0 0 10px rgba(196,181,253,0.7); }
+
   /* ── right panel: results ── */
   .result-panel {
     flex: 1;
@@ -355,7 +392,8 @@
   /* ── error line underline in source highlight ── */
   .err-line { text-decoration: underline wavy #ef4444; text-underline-offset: 4px; }
 
-  /* ── IR (四元式) table ── */
+  /* ── IR (四元式) table (disabled) ── */
+  /*
   .ir-table-wrap { overflow: auto; flex: 1; }
   .ir-table { font-size: 0.79rem; font-family: monospace; }
   .ir-op     { color: #c084fc; font-weight: 700; }
@@ -364,8 +402,10 @@
   .ir-label  { color: #f472b6; }
   .ir-dash   { color: #374151; }
   .ir-result { color: #6ee7b7; }
+  */
 
-  /* ── MIPS code block ── */
+  /* ── MIPS code block (disabled) ── */
+  /*
   #mips-tab { padding: 0; }
   #mips-code {
     flex: 1;
@@ -385,6 +425,7 @@
   .mips-reg   { color: #60a5fa; }
   .mips-imm   { color: #f59e0b; }
   .mips-comment { color: #374151; font-style: italic; }
+  */
 
   .placeholder {
     flex: 1;
@@ -639,7 +680,7 @@
 
 <header>
   <h1>类Rust 词法/语法分析器</h1>
-  <span>同济大学 · 编译原理大作业1 · LALR(1)</span>
+  <span>同济大学 · 编译原理大作业1</span>
   <div class="header-spacer"></div>
   <button class="btn btn-ghost" style="font-size:0.8rem;padding:5px 12px" onclick="openExport()">⬇ 导出</button>
 </header>
@@ -664,16 +705,20 @@
           <span class="modal-check-name">Token 流</span>
           <span class="modal-check-ext">.json</span>
         </label>
+        <!-- IR disabled
         <label class="modal-check-row">
           <input type="checkbox" id="exp-ir" checked>
           <span class="modal-check-name">四元式中间代码</span>
           <span class="modal-check-ext">.txt</span>
         </label>
+        -->
+        <!-- MIPS disabled
         <label class="modal-check-row">
           <input type="checkbox" id="exp-asm" checked>
           <span class="modal-check-name">MIPS 汇编代码</span>
           <span class="modal-check-ext">.asm</span>
         </label>
+        -->
       </div>
     </div>
     <div>
@@ -725,6 +770,13 @@ fn main() {
       <button class="btn btn-toggle active" id="sidebar-btn" onclick="toggleSidebar()" title="示例库">📂 示例库</button>
       <button class="btn btn-primary" onclick="analyse()">▶ 分析</button>
       <button class="btn btn-ghost" onclick="clearAll()">清空</button>
+      <div class="parser-wrap">
+        <span class="parser-wrap-label">解析器</span>
+        <div class="parser-sel">
+          <button class="psel-btn active" id="psel-lalr" onclick="setParser('lalr')">LALR(1)</button>
+          <button class="psel-btn" id="psel-rd" onclick="setParser('rd')">递归下降</button>
+        </div>
+      </div>
       <span class="shortcut">Ctrl+Enter 快速分析</span>
     </div>
     <div class="exec-panel" id="exec-panel">
@@ -748,20 +800,24 @@ fn main() {
   <div class="result-panel">
     <div class="tabs">
       <div class="tab active" onclick="switchTab('token-tab',this)">
-        Token 流 <span id="badge-token" class="tab-badge ok">0</span>
+        词法分析 <span id="badge-token" class="tab-badge ok">0</span>
       </div>
       <div class="tab" onclick="switchTab('ast-tab',this)">
-        语法树 (AST)
+        语法分析
       </div>
       <div class="tab" onclick="switchTab('err-tab',this)">
         错误 <span id="badge-err" class="tab-badge ok">0</span>
       </div>
+      <!-- IR disabled
       <div class="tab" onclick="switchTab('ir-tab',this)">
         四元式
       </div>
+      -->
+      <!-- MIPS disabled
       <div class="tab" onclick="switchTab('mips-tab',this)">
         MIPS
       </div>
+      -->
     </div>
 
     <div id="token-tab" class="tab-content active">
@@ -785,6 +841,7 @@ fn main() {
       </div>
     </div>
 
+    <!-- IR disabled
     <div id="ir-tab" class="tab-content">
       <div class="ir-table-wrap">
         <table class="ir-table">
@@ -793,16 +850,30 @@ fn main() {
         </table>
       </div>
     </div>
+    -->
 
+    <!-- MIPS disabled
     <div id="mips-tab" class="tab-content">
       <pre id="mips-code"><span style="color:#374151">点击「分析」后显示 MIPS 汇编</span></pre>
     </div>
+    -->
   </div>
 
 </div>
 
 <script>
 let _execFuncs = [];
+let _parserType = 'lalr';
+
+function setParser(type) {
+  _parserType = type;
+  document.getElementById('psel-lalr').classList.toggle('active', type === 'lalr');
+  document.getElementById('psel-rd').classList.toggle('active', type === 'rd');
+  // if code is currently in highlighted/read-only state, reset to editable
+  if (document.getElementById('source-hl').style.display === 'block') {
+    enterEdit();
+  }
+}
 
 // ════════════════════════════════════════════════════
 // SIDEBAR
@@ -880,8 +951,8 @@ function clearResults() {
   document.getElementById('token-body').innerHTML = '';
   document.getElementById('ast-container').innerHTML = '<div class="placeholder">点击「分析」后显示语法树</div>';
   document.getElementById('err-container').innerHTML = '<div class="placeholder">点击「分析」后显示错误信息</div>';
-  document.getElementById('ir-body').innerHTML = '';
-  document.getElementById('mips-code').innerHTML = '<span style="color:#374151">点击「分析」后显示 MIPS 汇编</span>';
+  // document.getElementById('ir-body').innerHTML = ''; // IR disabled
+  // document.getElementById('mips-code').innerHTML = '<span style="color:#374151">点击「分析」后显示 MIPS 汇编</span>'; // MIPS disabled
   document.getElementById('badge-token').textContent = '0';
   document.getElementById('badge-err').textContent = '0';
   document.getElementById('badge-token').className = 'tab-badge ok';
@@ -975,7 +1046,7 @@ async function analyse() {
   const res = await fetch('/api/analyse', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source }),
+    body: JSON.stringify({ source, parser: _parserType }),
   });
   const data = await res.json();
 
@@ -983,8 +1054,8 @@ async function analyse() {
   renderTokens(data.tokens);
   renderAST(data.ast);
   renderErrors(data.lex_errors, data.parse_errors, data.sem_errors);
-  renderIR(data.ir);
-  renderMIPS(data.mips);
+  // renderIR(data.ir); // IR disabled
+  // renderMIPS(data.mips); // MIPS disabled
   setupExec(data.funcs);
 
   const errCount = (data.lex_errors||[]).length +
@@ -1153,9 +1224,9 @@ function toggle(label, children) {
 }
 
 // ════════════════════════════════════════════════════
-// IR TABLE (四元式)
+// IR TABLE (四元式) — disabled
 // ════════════════════════════════════════════════════
-
+/*
 function renderIR(quads) {
   const tbody = document.getElementById('ir-body');
   tbody.innerHTML = '';
@@ -1186,11 +1257,12 @@ function irResultHtml(v, op) {
   if (op === 'label') return `<span class="ir-label">${escHtml(v)}:</span>`;
   return `<span class="ir-result">${escHtml(v)}</span>`;
 }
+*/
 
 // ════════════════════════════════════════════════════
-// MIPS CODE BLOCK
+// MIPS CODE BLOCK (disabled)
 // ════════════════════════════════════════════════════
-
+/*
 const MIPS_INSTRS = new Set([
   'add','addu','addiu','sub','subu','mul','mult','div','mflo','mfhi',
   'and','or','xor','xori','nor','slt','sltu','sltiu',
@@ -1204,7 +1276,6 @@ function renderMIPS(asm) {
   if (!asm) { pre.innerHTML = '<span style="color:#374151">无 MIPS 输出</span>'; return; }
 
   const html = asm.split('\n').map(line => {
-    // comment
     const ci = line.indexOf('#');
     const code = ci >= 0 ? line.slice(0, ci) : line;
     const comment = ci >= 0 ? line.slice(ci) : '';
@@ -1213,15 +1284,11 @@ function renderMIPS(asm) {
     const trimmed = code.trim();
 
     if (trimmed === '') {
-      // blank line
     } else if (trimmed.startsWith('.')) {
-      // directive
       out = `<span class="mips-dir">${escHtml(code)}</span>`;
     } else if (/^\S+:$/.test(trimmed)) {
-      // label line
       out = `<span class="mips-label">${escHtml(code)}</span>`;
     } else {
-      // instruction line: tokenise
       out = code.replace(/(\S+)/g, (tok) => {
         if (tok.endsWith(':'))   return `<span class="mips-label">${escHtml(tok)}</span>`;
         if (MIPS_INSTRS.has(tok.replace(',','')))
@@ -1237,6 +1304,7 @@ function renderMIPS(asm) {
 
   pre.innerHTML = html;
 }
+*/
 
 // ════════════════════════════════════════════════════
 // ERRORS
@@ -1351,7 +1419,7 @@ async function runFunc() {
     const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source, func: fn.name, args }),
+      body: JSON.stringify({ source, func: fn.name, args, parser: _parserType }),
     });
     const data = await res.json();
     if (data.error) {
@@ -1410,6 +1478,7 @@ async function pickExportDir() {
   } catch {}
 }
 
+/* IR disabled
 function _irToText(quads) {
   if (!quads || !quads.length) return '';
   const w = [4, 14, 12, 12, 12];
@@ -1420,6 +1489,7 @@ function _irToText(quads) {
     `${pad(i,w[0])}${pad(q.op,w[1])}${pad(q.arg1,w[2])}${pad(q.arg2,w[3])}${q.result}`
   ).join('\n');
 }
+*/
 
 async function _writeFile(name, content, mime) {
   if (_exportDirHandle) {
@@ -1444,10 +1514,10 @@ async function doExport() {
     tasks.push(_writeFile(`${base}.rs`,   document.getElementById('source').value, 'text/plain'));
   if (document.getElementById('exp-tok').checked)
     tasks.push(_writeFile(`${base}_tokens.json`, JSON.stringify(d.tokens || [], null, 2), 'application/json'));
-  if (document.getElementById('exp-ir').checked)
-    tasks.push(_writeFile(`${base}_ir.txt`, _irToText(d.ir), 'text/plain'));
-  if (document.getElementById('exp-asm').checked)
-    tasks.push(_writeFile(`${base}.asm`,  d.mips || '', 'text/plain'));
+  // if (document.getElementById('exp-ir').checked)  // IR disabled
+  //   tasks.push(_writeFile(`${base}_ir.txt`, _irToText(d.ir), 'text/plain'));
+  // if (document.getElementById('exp-asm').checked)  // MIPS disabled
+  //   tasks.push(_writeFile(`${base}.asm`,  d.mips || '', 'text/plain'));
 
   await Promise.all(tasks);
   closeExport();

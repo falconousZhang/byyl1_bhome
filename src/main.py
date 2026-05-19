@@ -6,9 +6,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from flask import Flask, request, jsonify, render_template, abort
 from lexer import lex
 from parser import parse
+from parser_rd import parse_rd
 from semantic import analyse
 from codegen import generate_ir
-from mips import generate_mips
+# from mips import generate_mips
 from interpreter import run_func, list_funcs
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
@@ -21,6 +22,12 @@ app = Flask(
 )
 
 
+def _parse(tokens, parser_type):
+    if parser_type == 'rd':
+        return parse_rd(tokens)
+    return parse(tokens)
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -28,8 +35,9 @@ def index():
 
 @app.route('/api/analyse', methods=['POST'])
 def api_analyse():
-    data = request.get_json(force=True)
-    source: str = data.get('source', '')
+    data        = request.get_json(force=True)
+    source      = data.get('source', '')
+    parser_type = data.get('parser', 'lalr')
 
     # 1. Lex
     tokens, lex_errors = lex(source)
@@ -39,7 +47,7 @@ def api_analyse():
     parse_errors = []
     ast_dict = None
     if not lex_errors:
-        ast, parse_errors = parse(tokens)
+        ast, parse_errors = _parse(tokens, parser_type)
         if ast:
             ast_dict = ast.to_dict()
 
@@ -48,13 +56,12 @@ def api_analyse():
     if ast:
         sem_errors = analyse(ast)
 
-    # 4. IR + MIPS (only if AST built, regardless of semantic errors)
+    # 4. IR (only if AST built)
     ir_quads = []
-    mips_asm = ''
     funcs    = []
     if ast:
         ir_quads = generate_ir(ast)
-        mips_asm = generate_mips(ir_quads)
+        # mips_asm = generate_mips(ir_quads)
         funcs    = list_funcs(ir_quads, ast)
 
     return jsonify({
@@ -66,23 +73,24 @@ def api_analyse():
         "parse_errors": parse_errors,
         "sem_errors":   sem_errors,
         "ast":          ast_dict,
-        "ir":           ir_quads,
-        "mips":         mips_asm,
+        # "ir":         ir_quads,  # IR disabled
+        # "mips":       mips_asm,
         "funcs":        funcs,
     })
 
 
 @app.route('/api/run', methods=['POST'])
 def api_run():
-    data      = request.get_json(force=True)
-    source    = data.get('source', '')
-    func_name = data.get('func', '')
-    args      = data.get('args', [])
+    data        = request.get_json(force=True)
+    source      = data.get('source', '')
+    func_name   = data.get('func', '')
+    args        = data.get('args', [])
+    parser_type = data.get('parser', 'lalr')
 
     tokens, lex_errors = lex(source)
     if lex_errors:
         return jsonify({'result': None, 'error': f'词法错误: {lex_errors[0]["msg"]}'})
-    ast, parse_errors = parse(tokens)
+    ast, parse_errors = _parse(tokens, parser_type)
     if parse_errors:
         return jsonify({'result': None, 'error': f'语法错误: {parse_errors[0]["msg"]}'})
 
@@ -93,7 +101,6 @@ def api_run():
 
 @app.route('/api/examples')
 def api_examples():
-    """Return sorted list of .rs files in examples/ with first-line description."""
     files = []
     for name in sorted(os.listdir(EXAMPLES_DIR)):
         if not name.endswith('.rs'):
@@ -112,7 +119,6 @@ def api_examples():
 
 @app.route('/api/examples/<path:filename>')
 def api_example_content(filename):
-    """Return content of a single example file."""
     if not re.match(r'^[\w.\-]+\.rs$', filename):
         abort(400)
     path = os.path.join(EXAMPLES_DIR, filename)
