@@ -321,7 +321,19 @@ class _Parser:
             self._adv(); return NumLiteral(int(t.value), lineno=t.line)
 
         if p == 'IDENT':
-            self._adv(); return Identifier(t.value, lineno=t.line)
+            self._adv()
+            if self._peek() == 'LPAREN':   # function call
+                self._adv()                # consume (
+                args = []
+                if self._peek() != 'RPAREN':
+                    args.append(self._expr())
+                    while self._peek() == 'COMMA':
+                        self._adv()
+                        if self._peek() == 'RPAREN': break
+                        args.append(self._expr())
+                self._expect('RPAREN')
+                return CallExpr(t.value, args, lineno=t.line)
+            return Identifier(t.value, lineno=t.line)
 
         if p == 'LPAREN':
             return self._paren_or_tuple()

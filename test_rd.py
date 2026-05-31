@@ -1,8 +1,9 @@
+"""Compare RD parser IR against LR1 parser IR for all examples."""
 import sys
 sys.path.insert(0, 'src')
 from lexer import lex
-from parser import parse
 from parser_rd import parse_rd
+from parser_lr1 import parse_lr1
 from codegen import generate_ir
 import os
 
@@ -16,32 +17,32 @@ for fname in files:
     if lex_errs:
         print('[LEX ERR]', fname)
         continue
-    ast_l, errs_l = parse(tokens)
     ast_r, errs_r = parse_rd(tokens)
-    if bool(errs_l) != bool(errs_r):
+    ast_l, errs_l = parse_lr1(tokens)
+    if bool(errs_r) != bool(errs_l):
         print('[ERR MISMATCH]', fname)
-        if errs_l: print('  LALR:', errs_l[0])
-        if errs_r: print('  RD:  ', errs_r[0])
+        if errs_r: print('  RD: ', errs_r[0])
+        if errs_l: print('  LR1:', errs_l[0])
         fail += 1
         continue
-    if errs_l:
+    if errs_r:
         ok += 1
         continue
     try:
-        ir_l = generate_ir(ast_l)
         ir_r = generate_ir(ast_r)
+        ir_l = generate_ir(ast_l)
     except Exception as e:
         print('[EXCEPTION]', fname, e)
         fail += 1
         continue
-    if ir_l != ir_r:
+    if ir_r != ir_l:
         print('[IR MISMATCH]', fname)
-        for i, (a, b) in enumerate(zip(ir_l, ir_r)):
+        for i, (a, b) in enumerate(zip(ir_r, ir_l)):
             if a != b:
-                print(f'  quad {i}: LALR={a}  RD={b}')
+                print(f'  quad {i}: RD={a}  LR1={b}')
                 break
-        if len(ir_l) != len(ir_r):
-            print(f'  lengths: LALR={len(ir_l)} RD={len(ir_r)}')
+        if len(ir_r) != len(ir_l):
+            print(f'  lengths: RD={len(ir_r)} LR1={len(ir_l)}')
         fail += 1
     else:
         print('[OK]', fname)

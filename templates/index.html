@@ -392,8 +392,7 @@
   /* ── error line underline in source highlight ── */
   .err-line { text-decoration: underline wavy #ef4444; text-underline-offset: 4px; }
 
-  /* ── IR (四元式) table (disabled) ── */
-  /*
+  /* ── IR (四元式) table ── */
   .ir-table-wrap { overflow: auto; flex: 1; }
   .ir-table { font-size: 0.79rem; font-family: monospace; }
   .ir-op     { color: #c084fc; font-weight: 700; }
@@ -402,7 +401,6 @@
   .ir-label  { color: #f472b6; }
   .ir-dash   { color: #374151; }
   .ir-result { color: #6ee7b7; }
-  */
 
   /* ── MIPS code block (disabled) ── */
   /*
@@ -705,13 +703,11 @@
           <span class="modal-check-name">Token 流</span>
           <span class="modal-check-ext">.json</span>
         </label>
-        <!-- IR disabled
         <label class="modal-check-row">
           <input type="checkbox" id="exp-ir" checked>
           <span class="modal-check-name">四元式中间代码</span>
           <span class="modal-check-ext">.txt</span>
         </label>
-        -->
         <!-- MIPS disabled
         <label class="modal-check-row">
           <input type="checkbox" id="exp-asm" checked>
@@ -811,11 +807,9 @@ fn main() {
       <div class="tab" onclick="switchTab('err-tab',this)">
         错误 <span id="badge-err" class="tab-badge ok">0</span>
       </div>
-      <!-- IR disabled
       <div class="tab" onclick="switchTab('ir-tab',this)">
         四元式
       </div>
-      -->
       <!-- MIPS disabled
       <div class="tab" onclick="switchTab('mips-tab',this)">
         MIPS
@@ -844,7 +838,6 @@ fn main() {
       </div>
     </div>
 
-    <!-- IR disabled
     <div id="ir-tab" class="tab-content">
       <div class="ir-table-wrap">
         <table class="ir-table">
@@ -853,7 +846,6 @@ fn main() {
         </table>
       </div>
     </div>
-    -->
 
     <!-- MIPS disabled
     <div id="mips-tab" class="tab-content">
@@ -955,7 +947,7 @@ function clearResults() {
   document.getElementById('token-body').innerHTML = '';
   document.getElementById('ast-container').innerHTML = '<div class="placeholder">点击「分析」后显示语法树</div>';
   document.getElementById('err-container').innerHTML = '<div class="placeholder">点击「分析」后显示错误信息</div>';
-  // document.getElementById('ir-body').innerHTML = ''; // IR disabled
+  document.getElementById('ir-body').innerHTML = '';
   // document.getElementById('mips-code').innerHTML = '<span style="color:#374151">点击「分析」后显示 MIPS 汇编</span>'; // MIPS disabled
   document.getElementById('badge-token').textContent = '0';
   document.getElementById('badge-err').textContent = '0';
@@ -1058,7 +1050,7 @@ async function analyse() {
   renderTokens(data.tokens);
   renderAST(data.ast);
   renderErrors(data.lex_errors, data.parse_errors, data.sem_errors);
-  // renderIR(data.ir); // IR disabled
+  renderIR(data.ir);
   // renderMIPS(data.mips); // MIPS disabled
   setupExec(data.funcs);
 
@@ -1228,9 +1220,9 @@ function toggle(label, children) {
 }
 
 // ════════════════════════════════════════════════════
-// IR TABLE (四元式) — disabled
+// IR TABLE (四元式)
 // ════════════════════════════════════════════════════
-/*
+
 function renderIR(quads) {
   const tbody = document.getElementById('ir-body');
   tbody.innerHTML = '';
@@ -1261,7 +1253,6 @@ function irResultHtml(v, op) {
   if (op === 'label') return `<span class="ir-label">${escHtml(v)}:</span>`;
   return `<span class="ir-result">${escHtml(v)}</span>`;
 }
-*/
 
 // ════════════════════════════════════════════════════
 // MIPS CODE BLOCK (disabled)
@@ -1482,7 +1473,6 @@ async function pickExportDir() {
   } catch {}
 }
 
-/* IR disabled
 function _irToText(quads) {
   if (!quads || !quads.length) return '';
   const w = [4, 14, 12, 12, 12];
@@ -1493,7 +1483,6 @@ function _irToText(quads) {
     `${pad(i,w[0])}${pad(q.op,w[1])}${pad(q.arg1,w[2])}${pad(q.arg2,w[3])}${q.result}`
   ).join('\n');
 }
-*/
 
 async function _writeFile(name, content, mime) {
   if (_exportDirHandle) {
@@ -1518,8 +1507,8 @@ async function doExport() {
     tasks.push(_writeFile(`${base}.rs`,   document.getElementById('source').value, 'text/plain'));
   if (document.getElementById('exp-tok').checked)
     tasks.push(_writeFile(`${base}_tokens.json`, JSON.stringify(d.tokens || [], null, 2), 'application/json'));
-  // if (document.getElementById('exp-ir').checked)  // IR disabled
-  //   tasks.push(_writeFile(`${base}_ir.txt`, _irToText(d.ir), 'text/plain'));
+  if (document.getElementById('exp-ir').checked)
+    tasks.push(_writeFile(`${base}_ir.txt`, _irToText(d.ir), 'text/plain'));
   // if (document.getElementById('exp-asm').checked)  // MIPS disabled
   //   tasks.push(_writeFile(`${base}.asm`,  d.mips || '', 'text/plain'));
 

@@ -77,7 +77,7 @@ def api_analyse():
         "parse_errors": parse_errors,
         "sem_errors":   sem_errors,
         "ast":          ast_dict,
-        # "ir":         ir_quads,  # IR disabled
+        "ir":           ir_quads,
         # "mips":       mips_asm,
         "funcs":        funcs,
     })

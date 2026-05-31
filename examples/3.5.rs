@@ -1,16 +1,28 @@
-// 规则 3.5 — 复合表达式（多运算符，测试优先级与结合性）
-// 综合 3.1~3.4，演示运算符优先级：* / 高于 + - 高于 == != < <= > >=
-// 括号可强制改变结合顺序
+// 规则 3.5 — 函数调用
+// <因子> -> <ID> '(' <实参列表> ')'
+// 演示：无参调用、单参调用、多参调用、调用结果参与运算、嵌套调用
 
-fn program_3_5(mut a:i32, mut b:i32, mut c:i32) -> i32 {
-    // * 优先于 +
-    let mut x:i32 = a + b * c;
-    // 括号改变优先级
-    let mut y:i32 = (a + b) * c;
-    // 链式比较
-    let mut z:i32 = a * b + c == c + b * a;
-    // 嵌套括号
-    let mut w:i32 = ((a + 1) * (b - 1)) / c;
-    return x + y + z + w;
+fn zero() -> i32 {
+    0
+}
+
+fn identity(a: i32) -> i32 {
+    a
+}
+
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn mul(a: i32, b: i32) -> i32 {
+    a * b
+}
+
+fn program_3_5(mut x: i32, mut y: i32) -> i32 {
+    let mut a: i32 = zero();
+    let mut b: i32 = identity(x);
+    let mut c: i32 = add(x, y);
+    let mut d: i32 = add(x, mul(y, 2));
+    a + b + c + d
 }
 #

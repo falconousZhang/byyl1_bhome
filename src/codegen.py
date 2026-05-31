@@ -25,6 +25,8 @@ Key ops:
   goto        _     _         L      unconditional jump to L
   if_false    cond  _         L      jump to L if cond == 0
   return      val   _         _      return val (val may be _)
+  push_param  val   _         _      push call argument
+  call        name  n_args    result call function, store return value
 """
 
 import sys, os
@@ -313,6 +315,14 @@ class IRGen:
             v2  = self._block(node.else_block)
             if v2: self._e(':=', v2, '_', t)
             self._e('label', '_', '_', Lend)
+            return t
+
+        if isinstance(node, CallExpr):
+            for arg in node.args:
+                v = self._expr(arg)
+                self._e('push_param', v)
+            t = self._t()
+            self._e('call', node.name, str(len(node.args)), t)
             return t
 
         if isinstance(node, LoopExpr):

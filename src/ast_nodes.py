@@ -332,3 +332,14 @@ class LoopExpr(Node):
 
     def to_dict(self):
         return {"type": "LoopExpr", "body": self.body.to_dict(), "lineno": self.lineno}
+
+class CallExpr(Node):
+    """Function call: name(arg0, arg1, ...) — rule 3.5"""
+    def __init__(self, name, args, lineno=None):
+        self.name = name    # str
+        self.args = args    # list[Node]
+        self.lineno = lineno
+
+    def to_dict(self):
+        return {"type": "CallExpr", "name": self.name,
+                "args": [a.to_dict() for a in self.args], "lineno": self.lineno}

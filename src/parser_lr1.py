@@ -42,6 +42,7 @@ _NONTERMINALS = {
     'stmt', 'if_stmt', 'iterable',
     'expr', 'cmp', 'add', 'mul', 'unary', 'postfix', 'primary',
     'array_elems', 'tuple_inner', 'tuple_elems',
+    'arg_list',
 }
 
 
@@ -358,9 +359,13 @@ def _make_productions():
     prod('primary', ['NUM'],
          lambda v: NumLiteral(int(v[0].value), lineno=v[0].line))
 
-    # 71: primary → IDENT
+    # 71: primary → IDENT  (plain identifier)
     prod('primary', ['IDENT'],
          lambda v: Identifier(v[0].value, lineno=v[0].line))
+
+    # 71b: primary → IDENT LPAREN arg_list RPAREN  (function call, rule 3.5)
+    prod('primary', ['IDENT', 'LPAREN', 'arg_list', 'RPAREN'],
+         lambda v: CallExpr(v[0].value, v[2], lineno=v[0].line))
 
     # 72: primary → LPAREN expr RPAREN   (returns inner expr, NOT TupleExpr)
     prod('primary', ['LPAREN', 'expr', 'RPAREN'],
@@ -416,6 +421,14 @@ def _make_productions():
 
     # 85: tuple_elems → expr COMMA tuple_elems
     prod('tuple_elems', ['expr', 'COMMA', 'tuple_elems'],
+         lambda v: [v[0]] + v[2])
+
+    # 86-88: arg_list  (for function calls)
+    prod('arg_list', [],
+         lambda v: [])
+    prod('arg_list', ['expr'],
+         lambda v: [v[0]])
+    prod('arg_list', ['expr', 'COMMA', 'arg_list'],
          lambda v: [v[0]] + v[2])
 
     return P
