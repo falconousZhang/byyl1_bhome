@@ -4,7 +4,9 @@
 // 演示：let 声明但不赋初值（来自 PDF 示例 program_2_10）
 
 fn program_2_10() {
-    let mut a;
-    let mut b:i32;
+    let mut a;      // type inferred via subsequent assignment
+    a = 1;
+    let mut b: i32; // type given via annotation
+    b = 2;
 }
 #

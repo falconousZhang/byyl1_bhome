@@ -4,7 +4,7 @@
 
 fn program_6_10() {
     let a:i32;       // with rule 2.1
-    let b;           // with rule 2.1
+    let b: i32;      // with rule 2.1
     let c:i32 = 1;   // with rule 2.3
     let d = 2;       // with rule 2.3
 }

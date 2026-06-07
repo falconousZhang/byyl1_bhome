@@ -4,7 +4,9 @@
 // 演示：带/不带类型注解的变量声明（作为 let 语句的核心）
 
 fn program_2_0() {
-    let mut a;
-    let mut b:i32;
+    let mut a;      // type inferred from assignment
+    a = 1;
+    let mut b: i32; // type given via annotation
+    b = 2;
 }
 #
