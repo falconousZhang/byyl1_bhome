@@ -130,10 +130,11 @@ class Analyser:
     def _pop(self):
         # Check for variables whose type can never be inferred (rule 2.1)
         for sym in self.scope.symbols.values():
-            if sym.sym_type is None and not sym.initialized:
+            if sym.sym_type is None:
                 self._err(
                     f"Cannot infer type of '{sym.name}': "
-                    f"declared without type annotation and never assigned",
+                    f"declared without type annotation and no assignment "
+                    f"provided a known type",
                     sym.lineno)
         self.scope = self.scope.parent
         self._borrow_stack.pop()
@@ -166,6 +167,9 @@ class Analyser:
     # ── type inference (best-effort) ─────────────────────────────────────────
 
     def _infer(self, node):
+        cached = getattr(node, '_sem_type', _UNSET)
+        if cached is not _UNSET:
+            return cached
         if isinstance(node, NumLiteral):   return TypeI32()
         if isinstance(node, Identifier):
             sym = self.scope.lookup(node.name)
@@ -196,12 +200,12 @@ class Analyser:
                 return bt.types[node.field]
             return None
         if isinstance(node, Block):
-            return self._infer(node.tail_expr) if node.tail_expr else None
+            return getattr(node, '_sem_type', None)
         if isinstance(node, CallExpr):
             fn = self._func_table.get(node.name)
             return fn['ret'] if fn else None
         if isinstance(node, IfExpr):
-            return self._infer(node.then_block)
+            return getattr(node, '_sem_type', None)
         if isinstance(node, ArrayExpr):
             if node.elements:
                 et = self._infer(node.elements[0])
@@ -212,7 +216,43 @@ class Analyser:
             if all(t is not None for t in types):
                 return TypeTuple(types)
             return None
+        if isinstance(node, LoopExpr):
+            return getattr(node, '_sem_type', None)
         return None
+
+    def _validate_type(self, t, line=None):
+        """Validate recursively declared type constraints."""
+        if t is None:
+            return
+        if isinstance(t, TypeArray):
+            if t.size <= 0:
+                self._err(f"Array size must be a positive integer, got {t.size}", line)
+            self._validate_type(t.elem_type, line)
+        elif isinstance(t, TypeRef):
+            self._validate_type(t.inner, line)
+        elif isinstance(t, TypeTuple):
+            for item in t.types:
+                self._validate_type(item, line)
+
+    def _check_condition(self, expr, line=None):
+        cond_t = self._infer(expr)
+        if cond_t is not None and not isinstance(cond_t, _TypeBool):
+            self._err(
+                f"Condition must be bool, got {type_str(cond_t)}",
+                line)
+
+    def _block_definitely_returns(self, block: Block) -> bool:
+        """Conservative check that control cannot fall through a function body."""
+        for stmt in block.stmts:
+            if isinstance(stmt, ReturnStmt):
+                return True
+            if isinstance(stmt, IfStmt) and stmt.else_block:
+                branches = [stmt.then_block]
+                branches.extend(b for _, b in stmt.elseif_clauses)
+                branches.append(stmt.else_block)
+                if all(self._block_definitely_returns(b) for b in branches):
+                    return True
+        return block.tail_expr is not None
 
     # ── lvalue helpers ────────────────────────────────────────────────────────
 
@@ -300,17 +340,47 @@ class Analyser:
 
     def visit_program(self, node: Program):
         for d in node.decls:
+            if d.name in self._func_table:
+                self._err(f"Function '{d.name}' is defined more than once", d.lineno)
             self._func_table[d.name] = {'params': d.params, 'ret': d.ret_type}
         for d in node.decls:
             self.visit_func(d)
 
     def visit_func(self, node: FunctionDecl):
         self._cur_ret_type = node.ret_type
+        self._validate_type(node.ret_type, node.lineno)
         self._push()
         for p in node.params:
+            self._validate_type(p.type_node, getattr(p, 'lineno', node.lineno))
             self.scope.define(Symbol(p.name, p.mutable, p.type_node,
                                      initialized=True, lineno=getattr(p, 'lineno', None)))
         self.visit_block(node.body)
+
+        tail_type = self._infer(node.body)
+        if node.body.tail_expr is not None:
+            self._check_not_void(node.body.tail_expr, node.lineno)
+            if node.ret_type is None:
+                if tail_type is not None:
+                    self._err(
+                        f"Function has no return type but its tail expression "
+                        f"has type {type_str(tail_type)}",
+                        node.lineno)
+            elif tail_type is None:
+                self._err(
+                    f"Function tail expression does not produce the declared "
+                    f"type {type_str(node.ret_type)}",
+                    node.lineno)
+            elif not types_compatible(node.ret_type, tail_type):
+                    self._err(
+                        f"Function tail expression type mismatch: expected "
+                        f"{type_str(node.ret_type)}, got {type_str(tail_type)}",
+                        node.lineno)
+
+        if node.ret_type is not None and not self._block_definitely_returns(node.body):
+            self._err(
+                f"Function '{node.name}' may exit without returning "
+                f"{type_str(node.ret_type)}",
+                node.lineno)
         self._pop()
         self._cur_ret_type = None
 
@@ -320,6 +390,9 @@ class Analyser:
             self.visit_stmt(s)
         if node.tail_expr:
             self.visit_expr(node.tail_expr)
+            node._sem_type = self._infer(node.tail_expr)
+        else:
+            node._sem_type = None
         self._pop()
 
     def visit_stmt(self, node):
@@ -332,7 +405,7 @@ class Analyser:
                 self._check_not_void(node.expr, node.lineno)
                 ret_actual = self._infer(node.expr)
                 if self._cur_ret_type is None:
-                    if ret_actual is not None and not isinstance(ret_actual, _TypeBool):
+                    if ret_actual is not None:
                         self._err(
                             f"Function has no return type but 'return' carries a value "
                             f"({type_str(ret_actual)})", node.lineno)
@@ -361,6 +434,7 @@ class Analyser:
 
         elif isinstance(node, WhileStmt):
             self.visit_expr(node.cond)
+            self._check_condition(node.cond, node.lineno)
             self._loop_depth += 1
             self._break_type_stack.append(_UNSET)
             self.visit_block(node.body)
@@ -413,6 +487,7 @@ class Analyser:
                 self._err("'continue' outside of loop", node.lineno)
 
     def _visit_let(self, node: LetStmt):
+        self._validate_type(node.type_node, node.lineno)
         has_init = node.init_expr is not None
         init_type = None
         if has_init:
@@ -480,19 +555,25 @@ class Analyser:
 
     def _visit_assign(self, node: AssignStmt):
         self.visit_expr(node.expr)
+        self._visit_lvalue(node.lvalue)
         # I: void function as rvalue
         self._check_not_void(node.expr, node.lineno)
         rhs_type = self._infer(node.expr)
 
+        # Borrow rules also apply when a reference variable is reassigned.
+        self._check_borrow_in_let(node.expr, node.lineno)
+
         # Mark lvalue root as initialized
         root = self._lvalue_root_name(node.lvalue)
+        root_sym = self.scope.lookup(root) if root else None
         if root:
-            sym = self.scope.lookup(root)
-            if sym:
-                sym.initialized = True
+            if root_sym:
+                root_sym.initialized = True
+                if isinstance(node.lvalue, Identifier) and root_sym.sym_type is None:
+                    root_sym.sym_type = rhs_type
 
         # C: immutability check
-        if not self._is_mutable_lvalue(node.lvalue):
+        if root_sym is not None and not self._is_mutable_lvalue(node.lvalue):
             label = f"'{root}'" if root else "expression"
             self._err(f"Cannot assign to immutable {label}", node.lineno)
 
@@ -509,6 +590,23 @@ class Analyser:
         # H: array / tuple literal shape vs lvalue type
         if lv_type:
             self._check_literal_shape(node.expr, lv_type, node.lineno)
+
+    def _visit_lvalue(self, node):
+        """Validate an assignment target without treating direct assignment as a read."""
+        if isinstance(node, Identifier):
+            if self.scope.lookup(node.name) is None:
+                self._err(f"Undefined variable '{node.name}'", node.lineno)
+        elif isinstance(node, UnaryOp) and node.op == '*':
+            self.visit_expr(node.operand)
+            operand_t = self._infer(node.operand)
+            if operand_t is not None and not isinstance(operand_t, TypeRef):
+                self._err(
+                    f"Cannot dereference non-reference type {type_str(operand_t)}",
+                    node.lineno)
+        elif isinstance(node, (IndexExpr, TupleFieldExpr)):
+            # Normal expression validation covers initialized base, index type,
+            # and static bounds checks.
+            self.visit_expr(node)
 
     def _visit_call(self, node: CallExpr):
         for arg in node.args:
@@ -539,17 +637,27 @@ class Analyser:
 
     def _visit_if_stmt(self, node: IfStmt):
         self.visit_expr(node.cond)
+        self._check_condition(node.cond, node.lineno)
         self.visit_block(node.then_block)
         for cond, blk in node.elseif_clauses:
             self.visit_expr(cond)
+            self._check_condition(cond, getattr(cond, 'lineno', node.lineno))
             self.visit_block(blk)
         if node.else_block:
             self.visit_block(node.else_block)
 
     def _visit_for(self, node: ForStmt):
+        self._validate_type(node.var_type, node.lineno)
         if isinstance(node.iterable, RangeExpr):
             self.visit_expr(node.iterable.start)
             self.visit_expr(node.iterable.end)
+            for endpoint, label in ((node.iterable.start, 'start'),
+                                    (node.iterable.end, 'end')):
+                endpoint_t = self._infer(endpoint)
+                if endpoint_t is not None and not isinstance(endpoint_t, TypeI32):
+                    self._err(
+                        f"Range {label} must be i32, got {type_str(endpoint_t)}",
+                        node.lineno)
         else:
             self.visit_expr(node.iterable)
             iter_type = self._infer(node.iterable)
@@ -565,6 +673,12 @@ class Analyser:
             it = self._infer(node.iterable)
             elem_type = it.elem_type if isinstance(it, TypeArray) else None
         resolved = node.var_type or elem_type
+        if node.var_type is not None and elem_type is not None \
+                and not types_compatible(node.var_type, elem_type):
+            self._err(
+                f"For-loop variable type mismatch: declared "
+                f"{type_str(node.var_type)}, iterable yields {type_str(elem_type)}",
+                node.lineno)
         self.scope.define(Symbol(node.var_name, node.mutable, resolved,
                                  initialized=True, lineno=node.lineno))
         self._loop_depth += 1
@@ -589,6 +703,8 @@ class Analyser:
                 self._err(
                     f"Use of possibly uninitialized variable '{node.name}'",
                     node.lineno)
+            if sym:
+                node._sem_type = sym.sym_type
 
         elif isinstance(node, BinaryOp):
             self.visit_expr(node.left)
@@ -596,9 +712,38 @@ class Analyser:
             # I: void call in binary expression
             self._check_not_void(node.left, node.lineno)
             self._check_not_void(node.right, node.lineno)
+            left_t = self._infer(node.left)
+            right_t = self._infer(node.right)
+            if node.op in ('+', '-', '*', '/'):
+                for side, actual in (('left', left_t), ('right', right_t)):
+                    if actual is not None and not isinstance(actual, TypeI32):
+                        self._err(
+                            f"Arithmetic {side} operand must be i32, "
+                            f"got {type_str(actual)}",
+                            node.lineno)
+                node._sem_type = TypeI32()
+            elif node.op in ('==', '!=', '<', '>', '<=', '>='):
+                for side, actual in (('left', left_t), ('right', right_t)):
+                    if actual is not None and not isinstance(actual, TypeI32):
+                        self._err(
+                            f"Comparison {side} operand must be i32, "
+                            f"got {type_str(actual)}",
+                            node.lineno)
+                node._sem_type = _TypeBool()
 
         elif isinstance(node, UnaryOp):
             self.visit_expr(node.operand)
+            operand_t = self._infer(node.operand)
+            if node.op == '-' and operand_t is not None \
+                    and not isinstance(operand_t, TypeI32):
+                self._err(
+                    f"Unary '-' operand must be i32, got {type_str(operand_t)}",
+                    node.lineno)
+            elif node.op == '*' and operand_t is not None \
+                    and not isinstance(operand_t, TypeRef):
+                self._err(
+                    f"Cannot dereference non-reference type {type_str(operand_t)}",
+                    node.lineno)
 
         elif isinstance(node, IndexExpr):
             self.visit_expr(node.base)
@@ -611,6 +756,7 @@ class Analyser:
                     node.lineno)
             # L: static bounds check (constant index)
             base_t = self._infer(node.base)
+            node._sem_type = base_t.elem_type if isinstance(base_t, TypeArray) else None
             if isinstance(base_t, TypeArray) and isinstance(node.index, NumLiteral):
                 if node.index.value < 0 or node.index.value >= base_t.size:
                     self._err(
@@ -621,6 +767,10 @@ class Analyser:
             self.visit_expr(node.base)
             # L: tuple field bounds check
             base_t = self._infer(node.base)
+            node._sem_type = (base_t.types[node.field]
+                              if isinstance(base_t, TypeTuple)
+                              and 0 <= node.field < len(base_t.types)
+                              else None)
             if isinstance(base_t, TypeTuple):
                 if node.field >= len(base_t.types):
                     self._err(
@@ -630,10 +780,27 @@ class Analyser:
         elif isinstance(node, ArrayExpr):
             for e in node.elements:
                 self.visit_expr(e)
+            element_types = [self._infer(e) for e in node.elements]
+            known = [t for t in element_types if t is not None]
+            if known:
+                expected = known[0]
+                for i, actual in enumerate(element_types[1:], start=1):
+                    if actual is not None and not types_compatible(expected, actual):
+                        self._err(
+                            f"Array element {i} type mismatch: expected "
+                            f"{type_str(expected)}, got {type_str(actual)}",
+                            node.lineno)
+                node._sem_type = TypeArray(expected, len(node.elements))
+            else:
+                node._sem_type = None
 
         elif isinstance(node, TupleExpr):
             for e in node.elements:
                 self.visit_expr(e)
+            element_types = [self._infer(e) for e in node.elements]
+            node._sem_type = (TypeTuple(element_types)
+                              if all(t is not None for t in element_types)
+                              else None)
 
         elif isinstance(node, RangeExpr):
             self.visit_expr(node.start)
@@ -644,14 +811,29 @@ class Analyser:
 
         elif isinstance(node, IfExpr):
             self.visit_expr(node.cond)
+            self._check_condition(node.cond, node.lineno)
             self.visit_block(node.then_block)
             self.visit_block(node.else_block)
+            then_t = self._infer(node.then_block)
+            else_t = self._infer(node.else_block)
+            if then_t is not None and else_t is not None:
+                if not types_compatible(then_t, else_t):
+                    self._err(
+                        f"If-expression branch type mismatch: then is "
+                        f"{type_str(then_t)}, else is {type_str(else_t)}",
+                        node.lineno)
+                    node._sem_type = None
+                else:
+                    node._sem_type = then_t
+            else:
+                node._sem_type = None
 
         elif isinstance(node, LoopExpr):
             self._loop_depth += 1
             self._break_type_stack.append(_UNSET)
             self.visit_block(node.body)
-            self._break_type_stack.pop()
+            break_t = self._break_type_stack.pop()
+            node._sem_type = None if break_t in (_UNSET, None) else break_t
             self._loop_depth -= 1
 
         elif isinstance(node, CallExpr):

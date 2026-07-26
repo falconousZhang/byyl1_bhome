@@ -16,6 +16,7 @@ cases = [
     ('未定义函数调用',       'fn f(){ g(); }'),
 ]
 
+misses = 0
 for name, src in cases:
     toks, _ = lex(src)
     ast, pe = parse_rd(toks)
@@ -25,3 +26,6 @@ for name, src in cases:
         print(f'[OK] {name}: {all_errs[0]["msg"]}')
     else:
         print(f'[MISS] {name}: no error detected')
+        misses += 1
+
+raise SystemExit(1 if misses else 0)

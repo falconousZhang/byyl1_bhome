@@ -5,6 +5,7 @@ Produces the same AST as parser.py (PLY/LALR) and parser_rd.py (recursive descen
 Table construction is done once and cached in __pycache__/lr1_tables.pkl.
 Public API:
     parse_lr1(token_list) -> (ast | None, list[dict])
+    parse_lr1_sdt(token_stream) -> (ast | None, list[dict], ir)
 """
 
 import os
@@ -680,13 +681,15 @@ def _get_tables():
 # 6.  LR(1) parsing algorithm
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _parse_tokens(token_list, action_tbl, goto_tbl):
+def _parse_tokens(token_stream, action_tbl, goto_tbl, irgen=None):
     """
     Standard stack-based LR(1) parse.
     Returns (result_value, errors_list).
     """
-    # Filter out END tokens; keep a synthetic EOF sentinel at the end
-    toks = [t for t in token_list if t.type != 'END']
+    # Pull tokens only when the LR driver needs a new lookahead.
+    source = iter(token_stream)
+    toks = []
+    ended = False
 
     errors = []
 
@@ -699,6 +702,17 @@ def _parse_tokens(token_list, action_tbl, goto_tbl):
     _eof_tok = _EOF()
 
     def cur_tok(pos):
+        nonlocal ended
+        while len(toks) <= pos and not ended:
+            try:
+                token = next(source)
+            except StopIteration:
+                ended = True
+                break
+            if token.type == 'END':
+                ended = True
+                break
+            toks.append(token)
         return toks[pos] if pos < len(toks) else _eof_tok
 
     def cur_sym(pos):
@@ -728,8 +742,6 @@ def _parse_tokens(token_list, action_tbl, goto_tbl):
             })
             # Try to skip tokens until we find something actionable
             pos += 1
-            if pos > len(toks):
-                break
             continue
 
         if act == ('acc',):
@@ -756,6 +768,11 @@ def _parse_tokens(token_list, action_tbl, goto_tbl):
                 vals = []
             try:
                 result = p.fn(vals)
+                # Syntax-directed translation: a function is emitted as soon
+                # as func_decl is reduced, before the whole program accepts.
+                if irgen is not None and p.lhs == 'func_decl' \
+                        and isinstance(result, FunctionDecl) and not errors:
+                    irgen._func(result)
             except Exception as e:
                 errors.append({
                     'msg': f'Internal error in action for prod {pid}: {e}',
@@ -798,6 +815,20 @@ def parse_lr1(token_list):
     if errors:
         return None, errors
     return result, []
+
+
+def parse_lr1_sdt(token_stream):
+    """Canonical LR(1) with lazy lexing and reduction-time IR generation."""
+    from codegen import IRGen
+
+    action_tbl, goto_tbl = _get_tables()
+    irgen = IRGen()
+    result, errors = _parse_tokens(
+        token_stream, action_tbl, goto_tbl, irgen=irgen)
+    if errors:
+        return None, errors, []
+    ir = [q.to_dict() for q in irgen.quads]
+    return result, [], ir
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -51,3 +51,4 @@ for fname in files:
 print()
 print('='*40)
 print(f'Total: {ok+fail}  OK: {ok}  FAIL: {fail}')
+raise SystemExit(1 if fail else 0)

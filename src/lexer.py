@@ -62,6 +62,7 @@ class Lexer:
         self.col = 1
         self.tokens: list[Token] = []
         self.errors: list[dict] = []
+        self._eof_emitted = False
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -101,7 +102,11 @@ class Lexer:
 
     # ── tokenize ──────────────────────────────────────────────────────────────
 
-    def tokenize(self) -> list[Token]:
+    def next_token(self) -> Token:
+        """Scan and return one token, allowing parsers to request tokens lazily."""
+        if self._eof_emitted:
+            raise StopIteration
+
         while self.pos < len(self.source):
             ch = self._peek()
 
@@ -130,8 +135,9 @@ class Lexer:
                 while self._peek() and self._peek().isdigit():
                     self._advance()
                 val = self.source[start:self.pos]
-                self.tokens.append(Token('NUM', val, tok_line, tok_col))
-                continue
+                token = Token('NUM', val, tok_line, tok_col)
+                self.tokens.append(token)
+                return token
 
             # identifier or keyword
             if ch.isalpha() or ch == '_':
@@ -143,21 +149,27 @@ class Lexer:
                 # store keyword tokens with their keyword name as type
                 if val in KEYWORDS:
                     ttype = val.upper()  # e.g. 'IF', 'FN', 'LET', 'I32'
-                self.tokens.append(Token(ttype, val, tok_line, tok_col))
-                continue
+                token = Token(ttype, val, tok_line, tok_col)
+                self.tokens.append(token)
+                return token
 
             # two-char symbols
             two = (ch or '') + (self._peek(1) or '')
             if two in TWO_CHAR:
                 self._advance(); self._advance()
-                self.tokens.append(Token(TWO_CHAR[two], two, tok_line, tok_col))
-                continue
+                token = Token(TWO_CHAR[two], two, tok_line, tok_col)
+                self.tokens.append(token)
+                return token
 
             # single-char symbols
             if ch in ONE_CHAR:
                 self._advance()
-                self.tokens.append(Token(ONE_CHAR[ch], ch, tok_line, tok_col))
-                continue
+                token = Token(ONE_CHAR[ch], ch, tok_line, tok_col)
+                self.tokens.append(token)
+                if token.type == 'END':
+                    self.pos = len(self.source)
+                    self._eof_emitted = True
+                return token
 
             # unknown character
             self.errors.append({
@@ -166,8 +178,21 @@ class Lexer:
             })
             self._advance()
 
-        # implicit EOF token (acts as '#')
-        self.tokens.append(Token('END', '#', self.line, self.col))
+        token = Token('END', '#', self.line, self.col)
+        self.tokens.append(token)
+        self._eof_emitted = True
+        return token
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.next_token()
+
+    def tokenize(self) -> list[Token]:
+        """Drain the lazy scanner and return all tokens scanned so far."""
+        while not self._eof_emitted:
+            self.next_token()
         return self.tokens
 
     def get_token_table(self) -> list[dict]:

@@ -39,3 +39,5 @@ if results:
             print(f'  {m}')
 else:
     print('All positive examples are clean!')
+
+raise SystemExit(1 if results else 0)

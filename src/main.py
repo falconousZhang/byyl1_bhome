@@ -1,19 +1,20 @@
 """Flask backend."""
 
-import sys, os, re
+import sys, os, re, threading, webbrowser
 sys.path.insert(0, os.path.dirname(__file__))
 
 from flask import Flask, request, jsonify, render_template, abort
-from lexer import lex
+from lexer import Lexer, lex
 # from parser import parse  # LALR disabled
-from parser_rd import parse_rd
-from parser_lr1 import parse_lr1
+from parser_rd import parse_rd, parse_rd_sdt
+from parser_lr1 import parse_lr1, parse_lr1_sdt
 from semantic import analyse
 from codegen import generate_ir
-# from mips import generate_mips
+from mips import generate_mips
 from interpreter import run_func, list_funcs
 
-ROOT = os.path.join(os.path.dirname(__file__), '..')
+ROOT = (getattr(sys, '_MEIPASS', None)
+        or os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 EXAMPLES_DIR = os.path.join(ROOT, 'examples')
 
 app = Flask(
@@ -21,6 +22,20 @@ app = Flask(
     template_folder=os.path.join(ROOT, 'templates'),
     static_folder=os.path.join(ROOT, 'static'),
 )
+
+APP_URL = 'http://127.0.0.1:5000/'
+
+
+def _open_browser():
+    """Open the compiler UI after the packaged server has started."""
+    webbrowser.open_new_tab(APP_URL)
+
+
+def _schedule_browser_open(delay=1.0):
+    timer = threading.Timer(delay, _open_browser)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _parse(tokens, parser_type):
@@ -32,6 +47,27 @@ def _parse(tokens, parser_type):
     return parse_rd(tokens)
 
 
+def _scan_parse(source, parser_type):
+    """Run either parser with lazy lexing and syntax-directed translation."""
+    if parser_type in ('rd', 'lr1'):
+        lexer = Lexer(source)
+        parse_sdt = parse_rd_sdt if parser_type == 'rd' else parse_lr1_sdt
+        ast, parse_errors, syntax_ir = parse_sdt(lexer)
+        # A syntax error may stop before EOF; drain only for a complete token/error
+        # table shown in the UI.  Successful parsing already consumed lazily to EOF.
+        lexer.tokenize()
+        if lexer.errors:
+            ast = None
+            syntax_ir = []
+        return lexer.tokens, lexer.errors, ast, parse_errors, syntax_ir
+
+    tokens, lex_errors = lex(source)
+    if lex_errors:
+        return tokens, lex_errors, None, [], None
+    ast, parse_errors = _parse(tokens, parser_type)
+    return tokens, lex_errors, ast, parse_errors, None
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -41,31 +77,27 @@ def index():
 def api_analyse():
     data        = request.get_json(force=True)
     source      = data.get('source', '')
-    parser_type = data.get('parser', 'lalr')
+    parser_type = data.get('parser', 'rd')
 
-    # 1. Lex
-    tokens, lex_errors = lex(source)
-
-    # 2. Parse (only if no lex errors)
-    ast = None
-    parse_errors = []
+    # 1-2. Lazy lex + syntax-directed translation (RD or canonical LR(1))
+    tokens, lex_errors, ast, parse_errors, syntax_ir = _scan_parse(
+        source, parser_type)
     ast_dict = None
-    if not lex_errors:
-        ast, parse_errors = _parse(tokens, parser_type)
-        if ast:
-            ast_dict = ast.to_dict()
+    if ast:
+        ast_dict = ast.to_dict()
 
     # 3. Semantic (only if AST built)
     sem_errors = []
     if ast:
         sem_errors = analyse(ast)
 
-    # 4. IR (only if AST built)
+    # 4. IR (only for a semantically valid program)
     ir_quads = []
+    mips_asm = ''
     funcs    = []
-    if ast:
-        ir_quads = generate_ir(ast)
-        # mips_asm = generate_mips(ir_quads)
+    if ast and not sem_errors:
+        ir_quads = syntax_ir if syntax_ir is not None else generate_ir(ast)
+        mips_asm = generate_mips(ir_quads)
         funcs    = list_funcs(ir_quads, ast)
 
     return jsonify({
@@ -78,7 +110,7 @@ def api_analyse():
         "sem_errors":   sem_errors,
         "ast":          ast_dict,
         "ir":           ir_quads,
-        # "mips":       mips_asm,
+        "mips":         mips_asm,
         "funcs":        funcs,
     })
 
@@ -89,16 +121,24 @@ def api_run():
     source      = data.get('source', '')
     func_name   = data.get('func', '')
     args        = data.get('args', [])
-    parser_type = data.get('parser', 'lalr')
+    parser_type = data.get('parser', 'rd')
 
-    tokens, lex_errors = lex(source)
+    tokens, lex_errors, ast, parse_errors, syntax_ir = _scan_parse(
+        source, parser_type)
     if lex_errors:
         return jsonify({'result': None, 'error': f'词法错误: {lex_errors[0]["msg"]}'})
-    ast, parse_errors = _parse(tokens, parser_type)
     if parse_errors:
         return jsonify({'result': None, 'error': f'语法错误: {parse_errors[0]["msg"]}'})
 
-    ir_quads = generate_ir(ast)
+    sem_errors = analyse(ast)
+    if sem_errors:
+        return jsonify({
+            'result': None,
+            'error': f'语义错误: {sem_errors[0]["msg"]}',
+            'sem_errors': sem_errors,
+        })
+
+    ir_quads = syntax_ir if syntax_ir is not None else generate_ir(ast)
     result, err = run_func(ir_quads, func_name, args)
     return jsonify({'result': result, 'error': err})
 
@@ -132,4 +172,6 @@ def api_example_content(filename):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    if getattr(sys, 'frozen', False) and os.environ.get('BYYL_NO_BROWSER') != '1':
+        _schedule_browser_open()
+    app.run(debug=False, use_reloader=False, port=5000)

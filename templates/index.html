@@ -402,8 +402,7 @@
   .ir-dash   { color: #374151; }
   .ir-result { color: #6ee7b7; }
 
-  /* ── MIPS code block (disabled) ── */
-  /*
+  /* ── MIPS code block ── */
   #mips-tab { padding: 0; }
   #mips-code {
     flex: 1;
@@ -423,7 +422,6 @@
   .mips-reg   { color: #60a5fa; }
   .mips-imm   { color: #f59e0b; }
   .mips-comment { color: #374151; font-style: italic; }
-  */
 
   .placeholder {
     flex: 1;
@@ -708,13 +706,11 @@
           <span class="modal-check-name">四元式中间代码</span>
           <span class="modal-check-ext">.txt</span>
         </label>
-        <!-- MIPS disabled
         <label class="modal-check-row">
           <input type="checkbox" id="exp-asm" checked>
           <span class="modal-check-name">MIPS 汇编代码</span>
           <span class="modal-check-ext">.asm</span>
         </label>
-        -->
       </div>
     </div>
     <div>
@@ -810,11 +806,9 @@ fn main() {
       <div class="tab" onclick="switchTab('ir-tab',this)">
         四元式
       </div>
-      <!-- MIPS disabled
       <div class="tab" onclick="switchTab('mips-tab',this)">
         MIPS
       </div>
-      -->
     </div>
 
     <div id="token-tab" class="tab-content active">
@@ -847,11 +841,9 @@ fn main() {
       </div>
     </div>
 
-    <!-- MIPS disabled
     <div id="mips-tab" class="tab-content">
       <pre id="mips-code"><span style="color:#374151">点击「分析」后显示 MIPS 汇编</span></pre>
     </div>
-    -->
   </div>
 
 </div>
@@ -948,7 +940,7 @@ function clearResults() {
   document.getElementById('ast-container').innerHTML = '<div class="placeholder">点击「分析」后显示语法树</div>';
   document.getElementById('err-container').innerHTML = '<div class="placeholder">点击「分析」后显示错误信息</div>';
   document.getElementById('ir-body').innerHTML = '';
-  // document.getElementById('mips-code').innerHTML = '<span style="color:#374151">点击「分析」后显示 MIPS 汇编</span>'; // MIPS disabled
+  document.getElementById('mips-code').innerHTML = '<span style="color:#374151">点击「分析」后显示 MIPS 汇编</span>';
   document.getElementById('badge-token').textContent = '0';
   document.getElementById('badge-err').textContent = '0';
   document.getElementById('badge-token').className = 'tab-badge ok';
@@ -1039,38 +1031,48 @@ function enterEdit() {
 
 async function analyse() {
   const source = document.getElementById('source').value;
-  const res = await fetch('/api/analyse', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source, parser: _parserType }),
-  });
-  const data = await res.json();
+  try {
+    const res = await fetch('/api/analyse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, parser: _parserType }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
 
-  _lastData = data;
-  renderTokens(data.tokens);
-  renderAST(data.ast);
-  renderErrors(data.lex_errors, data.parse_errors, data.sem_errors);
-  renderIR(data.ir);
-  // renderMIPS(data.mips); // MIPS disabled
-  setupExec(data.funcs);
+    _lastData = data;
+    renderTokens(data.tokens);
+    renderAST(data.ast);
+    renderErrors(data.lex_errors, data.parse_errors, data.sem_errors);
+    renderIR(data.ir);
+    renderMIPS(data.mips);
+    setupExec(data.funcs);
 
-  const errCount = (data.lex_errors||[]).length +
-                   (data.parse_errors||[]).length +
-                   (data.sem_errors||[]).length;
+    const errCount = (data.lex_errors||[]).length +
+                     (data.parse_errors||[]).length +
+                     (data.sem_errors||[]).length;
 
-  const allErrors = [...(data.lex_errors||[]), ...(data.parse_errors||[]), ...(data.sem_errors||[])];
-  showHighlight(highlightSource(source, data.tokens, allErrors));
-  if (errCount > 0) {
+    const allErrors = [...(data.lex_errors||[]), ...(data.parse_errors||[]), ...(data.sem_errors||[])];
+    showHighlight(highlightSource(source, data.tokens, allErrors));
+    if (errCount > 0) {
+      switchTab('err-tab', document.querySelector('[onclick*="err-tab"]'));
+    }
+
+    const badge = document.getElementById('badge-err');
+    badge.textContent = errCount;
+    badge.className = 'tab-badge' + (errCount ? '' : ' ok');
+
+    const tb = document.getElementById('badge-token');
+    tb.textContent = data.tokens.length;
+    tb.className = 'tab-badge ok';
+  } catch (err) {
+    console.error('Analyse failed:', err);
+    renderErrors([], [{msg: `分析失败：${err.message}`, line: null}], []);
     switchTab('err-tab', document.querySelector('[onclick*="err-tab"]'));
+    const badge = document.getElementById('badge-err');
+    badge.textContent = '1';
+    badge.className = 'tab-badge';
   }
-
-  const badge = document.getElementById('badge-err');
-  badge.textContent = errCount;
-  badge.className = 'tab-badge' + (errCount ? '' : ' ok');
-
-  const tb = document.getElementById('badge-token');
-  tb.textContent = data.tokens.length;
-  tb.className = 'tab-badge ok';
 }
 
 // ════════════════════════════════════════════════════
@@ -1255,9 +1257,8 @@ function irResultHtml(v, op) {
 }
 
 // ════════════════════════════════════════════════════
-// MIPS CODE BLOCK (disabled)
+// MIPS CODE BLOCK
 // ════════════════════════════════════════════════════
-/*
 const MIPS_INSTRS = new Set([
   'add','addu','addiu','sub','subu','mul','mult','div','mflo','mfhi',
   'and','or','xor','xori','nor','slt','sltu','sltiu',
@@ -1299,7 +1300,6 @@ function renderMIPS(asm) {
 
   pre.innerHTML = html;
 }
-*/
 
 // ════════════════════════════════════════════════════
 // ERRORS
@@ -1509,8 +1509,8 @@ async function doExport() {
     tasks.push(_writeFile(`${base}_tokens.json`, JSON.stringify(d.tokens || [], null, 2), 'application/json'));
   if (document.getElementById('exp-ir').checked)
     tasks.push(_writeFile(`${base}_ir.txt`, _irToText(d.ir), 'text/plain'));
-  // if (document.getElementById('exp-asm').checked)  // MIPS disabled
-  //   tasks.push(_writeFile(`${base}.asm`,  d.mips || '', 'text/plain'));
+  if (document.getElementById('exp-asm').checked)
+    tasks.push(_writeFile(`${base}.asm`,  d.mips || '', 'text/plain'));
 
   await Promise.all(tasks);
   closeExport();

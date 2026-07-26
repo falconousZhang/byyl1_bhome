@@ -21,18 +21,39 @@ class _Parser:
         'LEQ': '<=', 'GEQ': '>=',
     }
 
-    def __init__(self, tokens):
-        self._toks  = [t for t in tokens if t.type != 'END']
+    def __init__(self, tokens, emit_ir=False):
+        self._source = iter(tokens)
+        self._toks  = []
         self._pos   = 0
+        self._ended = False
         self.errors = []
+        if emit_ir:
+            from codegen import IRGen
+            self.irgen = IRGen()
+        else:
+            self.irgen = None
 
     # ── stream helpers ────────────────────────────────────────────────────────
 
+    def _fill(self, index):
+        while not self._ended and len(self._toks) <= index:
+            try:
+                token = next(self._source)
+            except StopIteration:
+                self._ended = True
+                break
+            if token.type == 'END':
+                self._ended = True
+                break
+            self._toks.append(token)
+
     def _peek(self, off=0):
         i = self._pos + off
+        self._fill(i)
         return self._toks[i].type if i < len(self._toks) else 'END'
 
     def _cur(self):
+        self._fill(self._pos)
         return self._toks[self._pos] if self._pos < len(self._toks) else None
 
     def _adv(self):
@@ -62,7 +83,13 @@ class _Parser:
         decls = []
         while self._peek() != 'END':
             if self._peek() == 'FN':
-                decls.append(self._func())
+                before = len(self.errors)
+                fn = self._func()
+                decls.append(fn)
+                # Syntax-directed translation: emit a completed function as
+                # soon as its declaration is reduced, not after the program.
+                if self.irgen is not None and len(self.errors) == before:
+                    self.irgen._func(fn)
             else:
                 t = self._adv()
                 if t:
@@ -408,3 +435,13 @@ def parse_rd(token_list):
     if p.errors:
         return None, p.errors
     return ast, []
+
+
+def parse_rd_sdt(token_stream):
+    """Parse a lazy token stream and emit IR during function reductions."""
+    p = _Parser(token_stream, emit_ir=True)
+    ast = p.parse_program()
+    if p.errors:
+        return None, p.errors, []
+    ir = [q.to_dict() for q in p.irgen.quads]
+    return ast, [], ir

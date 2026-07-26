@@ -4,7 +4,7 @@ Calling convention (simplified, leaf-function friendly):
   $a0-$a3  : first 4 incoming parameters
   $v0      : return value
   $t0-$t1  : scratch registers for computation
-  $sp      : stack pointer (fixed inside a function; no nested calls)
+  $sp      : stack pointer (fixed frame plus temporary outgoing arguments)
   0($sp)   : saved $ra
 
 Stack frame layout (per function, words from $sp):
@@ -33,14 +33,18 @@ def _needs_slot(v: str) -> bool:
 # ── Per-function code generator ───────────────────────────────────────────────
 
 class FuncGen:
-    def __init__(self, name: str, quads: list[dict]):
+    def __init__(self, name: str, quads: list[dict], symbol_map=None):
         self.name       = name
+        self.symbol_map = symbol_map or {}
+        self.asm_name   = self.symbol_map.get(name, name)
         self.quads      = quads
         self.lines: list[str]      = []
         self.var_off: dict[str, int] = {}   # name -> byte offset from $sp
         self.arrays:  dict[str, int] = {}   # array_temp -> element count
+        self.array_lens: dict[str, int] = {} # allocation/alias -> element count
         self.tuples:  dict[str, int] = {}   # tuple_temp -> element count
         self.params:  list[str]      = []
+        self.pending_args: list[str] = []
         self.frame   = 0                    # total frame size in bytes
 
     # ── phase 1: collect variable slots ──────────────────────────────────────
@@ -61,14 +65,23 @@ class FuncGen:
                 self.params.append(a1); add(a1)
             elif op == 'alloc[]':
                 n = int(a1); self.arrays[r] = n
+                self.array_lens[r] = n
                 add(r)
+                add(f'__a_{r}_len')
                 for i in range(n): add(f'__a_{r}_{i}')
             elif op == 'alloc()':
                 n = int(a1); self.tuples[r] = n
                 add(r)
                 for i in range(n): add(f'__u_{r}_{i}')
+            elif op == 'push_param':
+                add(a1)
+            elif op == 'call':
+                add(r)
             else:
                 for v in (a1, a2, r): add(v)
+
+            if op == ':=' and a1 in self.array_lens:
+                self.array_lens[r] = self.array_lens[a1]
 
         # slot 0 reserved for $ra; variables start at slot 1
         self.frame = 4 * (len(order) + 1)
@@ -81,7 +94,7 @@ class FuncGen:
     def _asm(self, s: str):
         self.lines.append(s)
 
-    def _load(self, v: str, reg: str):
+    def _load(self, v: str, reg: str, sp_bias: int = 0):
         """Load value/variable v into reg."""
         if v == '_':
             self._asm(f'    li      {reg}, 0')
@@ -90,7 +103,7 @@ class FuncGen:
         else:
             off = self.var_off.get(v)
             if off is not None:
-                self._asm(f'    lw      {reg}, {off}($sp)')
+                self._asm(f'    lw      {reg}, {off + sp_bias}($sp)')
             else:
                 self._asm(f'    # [warn] unknown var: {v}')
 
@@ -127,16 +140,20 @@ class FuncGen:
 
     def generate(self) -> list[str]:
         self._collect()
-        epi = f'__{self.name}_ret'
+        epi = f'__{self.asm_name}_ret'
 
         # Function label + prologue
-        self._asm(f'{self.name}:')
+        self._asm(f'{self.asm_name}:')
         self._asm(f'    addiu   $sp, $sp, -{self.frame}')
         self._asm(f'    sw      $ra, 0($sp)')
 
         # Copy $a0-$a3 to parameter slots
         for i, pname in enumerate(self.params[:4]):
             self._asm(f'    sw      $a{i}, {self.var_off[pname]}($sp)    # {pname}')
+        # Additional parameters are placed by the caller above its current $sp.
+        for i, pname in enumerate(self.params[4:]):
+            self._asm(f'    lw      $t0, {self.frame + i * 4}($sp)')
+            self._asm(f'    sw      $t0, {self.var_off[pname]}($sp)    # {pname}')
 
         # Translate body quads
         for q in self.quads:
@@ -169,6 +186,18 @@ class FuncGen:
         if op == 'if_false':
             self._load(a1, '$t0')
             self._asm(f'    beq     $t0, $zero, {r}')
+            return
+
+        if op == 'bounds':
+            self._load(a2, '$t0')
+            self._asm('    bltz    $t0, __bounds_error')
+            if a1 in self.arrays:
+                self._arr_addr(a1, '$t1')
+            else:
+                self._load(a1, '$t1')
+            self._asm('    lw      $t1, -4($t1)')
+            self._asm('    slt     $t1, $t0, $t1')
+            self._asm('    beq     $t1, $zero, __bounds_error')
             return
 
         if op == 'return':
@@ -240,10 +269,23 @@ class FuncGen:
             self._asm(f'    sw      $t1, 0($t0)')
             return
 
+        if op in ('index_addr', 'field_addr'):
+            if op == 'index_addr' and a1 in self.arrays:
+                self._arr_addr(a1, '$t0')
+            elif op == 'field_addr' and a1 in self.tuples:
+                self._tup_addr(a1, '$t0')
+            else:
+                self._load(a1, '$t0')
+            self._idx_addr('$t0', a2)
+            self._store('$t0', r)
+            return
+
         # ── arrays ────────────────────────────────────────────────────────────
         if op == 'alloc[]':
             self._arr_addr(r, '$t0')
             self._store('$t0', r)
+            self._asm(f'    li      $t1, {a1}')
+            self._asm('    sw      $t1, -4($t0)')
             return
 
         if op == '[]:=':            # a1[a2] = r(val)
@@ -267,8 +309,11 @@ class FuncGen:
             return
 
         if op == 'arr_len':
-            n = self.arrays.get(a1, 0)
-            self._asm(f'    li      $t0, {n}')
+            if a1 in self.arrays:
+                self._arr_addr(a1, '$t0')
+            else:
+                self._load(a1, '$t0')
+            self._asm('    lw      $t0, -4($t0)')
             self._store('$t0', r)
             return
 
@@ -302,6 +347,36 @@ class FuncGen:
         if op == 'range':
             return
 
+        # ── function calls ───────────────────────────────────────────────────
+        if op == 'push_param':
+            self.pending_args.append(a1)
+            return
+
+        if op == 'call':
+            argc = int(a2)
+            args = self.pending_args[-argc:] if argc else []
+            if argc:
+                del self.pending_args[-argc:]
+
+            for i, value in enumerate(args[:4]):
+                self._load(value, f'$a{i}')
+
+            # Push arguments 5+ in reverse order.  Once $sp moves, sp_bias
+            # keeps loads addressed relative to this function's fixed frame.
+            pushed = 0
+            for value in reversed(args[4:]):
+                self._load(value, '$t0', sp_bias=pushed)
+                self._asm('    addiu   $sp, $sp, -4')
+                self._asm('    sw      $t0, 0($sp)')
+                pushed += 4
+
+            self._asm(f'    jal     {self.symbol_map.get(a1, a1)}')
+            self._asm('    nop')
+            if pushed:
+                self._asm(f'    addiu   $sp, $sp, {pushed}')
+            self._store('$v0', r)
+            return
+
         # ── fallback ─────────────────────────────────────────────────────────
         self._asm(f'    # (unhandled) {op}  {a1}  {a2}  {r}')
 
@@ -328,16 +403,34 @@ class MIPSGen:
         return funcs
 
     def generate(self) -> str:
+        funcs = self._split()
+        has_main = any(fname == 'main' for fname, _ in funcs)
+        symbol_map = {'main': '__byyl_user_main'} if has_main else {}
         lines = [
             '# MIPS assembly generated by byyl1 compiler',
             '.text',
-            '.globl main',
-            '',
         ]
-        for fname, fquads in self._split():
-            fg = FuncGen(fname, fquads)
+        if has_main:
+            lines.extend([
+                '.globl main',
+                'main:',
+                '    jal     __byyl_user_main',
+                '    nop',
+                '    move    $s0, $v0    # preserve program result for inspection',
+                '    li      $v0, 10',
+                '    syscall',
+            ])
+        lines.append('')
+        for fname, fquads in funcs:
+            fg = FuncGen(fname, fquads, symbol_map)
             lines.extend(fg.generate())
             lines.append('')
+        lines.extend([
+            '__bounds_error:',
+            '    li      $v0, 10',
+            '    syscall',
+            '',
+        ])
         return '\n'.join(lines)
 
 

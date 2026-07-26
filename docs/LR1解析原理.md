@@ -294,6 +294,8 @@ loop:
         state_stack = state_stack[:-n]
         val_stack   = val_stack[:-n]
         result = p.fn(vals)        # 执行语义动作，构建 AST 节点
+        if p.lhs == 'func_decl':
+            irgen._func(result)          # 归约完成时立即生成四元式
         new_state = GOTO[state_stack[-1]][p.lhs]
         state_stack.append(new_state)
         val_stack.append(result)

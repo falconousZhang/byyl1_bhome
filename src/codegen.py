@@ -12,10 +12,13 @@ Key ops:
   </>/<=/>=/==/!= a b         t      t = (a op b) as 0/1
   &           var   _         t      t = &var
   &mut        var   _         t      t = &mut var
+  index_addr  arr   idx       t      t = &arr[idx]
+  field_addr  tup   n         t      t = &tup.n
   deref       ptr   _         t      t = *ptr
   deref_write ptr   val       _      *ptr = val
   []          arr   idx       t      t = arr[idx]
   []:=        arr   idx       val    arr[idx] = val
+  bounds      arr   idx       _      runtime check 0 <= idx < len(arr)
   .           tup   n         t      t = tup.n
   .:=         tup   n         val    tup.n = val
   alloc[]     n     _         t      t = new [n]i32 on stack
@@ -59,6 +62,8 @@ class IRGen:
         self._breaks:    list[str] = [] # break-target label stack
         self._conts:     list[str] = [] # continue-target label stack
         self._brk_temps: list[str] = [] # loop-expr result temp stack
+        self._scopes: list[dict[str, str]] = []
+        self._vc = 0                    # unique source-variable counter
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -73,6 +78,28 @@ class IRGen:
     def _e(self, op, a1='_', a2='_', r='_'):
         self.quads.append(Quad(op, a1, a2, r))
 
+    def _push_scope(self):
+        self._scopes.append({})
+
+    def _pop_scope(self):
+        self._scopes.pop()
+
+    def _declare(self, source_name: str) -> str:
+        """Give every source binding a stable unique IR name."""
+        self._vc += 1
+        ir_name = f'{source_name}@{self._vc}'
+        self._scopes[-1][source_name] = ir_name
+        return ir_name
+
+    def _resolve(self, source_name: str) -> str:
+        for scope in reversed(self._scopes):
+            if source_name in scope:
+                return scope[source_name]
+        return source_name
+
+    def _emit_bounds(self, base_value: str, index_value: str):
+        self._e('bounds', base_value, index_value)
+
     # ── program ───────────────────────────────────────────────────────────────
 
     def gen_program(self, prog: Program):
@@ -81,21 +108,27 @@ class IRGen:
 
     def _func(self, fn: FunctionDecl):
         self._e('func_begin', fn.name, str(len(fn.params)))
+        self._push_scope()
         for p in fn.params:
-            self._e('param', p.name)
+            self._e('param', self._declare(p.name))
         tail = self._block(fn.body)
         if tail and tail != '_':   # tail expression used as return value
             self._e('return', tail)
+        self._pop_scope()
         self._e('func_end', fn.name)
 
     # ── block ─────────────────────────────────────────────────────────────────
 
     def _block(self, blk: Block):
-        for s in blk.stmts:
-            self._stmt(s)
-        if blk.tail_expr:
-            return self._expr(blk.tail_expr)
-        return None
+        self._push_scope()
+        try:
+            for s in blk.stmts:
+                self._stmt(s)
+            if blk.tail_expr:
+                return self._expr(blk.tail_expr)
+            return None
+        finally:
+            self._pop_scope()
 
     # ── statements ────────────────────────────────────────────────────────────
 
@@ -120,29 +153,35 @@ class IRGen:
         elif isinstance(node, LoopStmt):
             self._loop_stmt(node)
         elif isinstance(node, BreakStmt):
+            if not self._breaks:
+                return  # semantic analysis reports the invalid control transfer
             if node.expr and self._brk_temps:
                 v = self._expr(node.expr)
                 self._e(':=', v, '_', self._brk_temps[-1])
             self._e('goto', '_', '_', self._breaks[-1])
         elif isinstance(node, ContinueStmt):
-            self._e('goto', '_', '_', self._conts[-1])
+            if self._conts:
+                self._e('goto', '_', '_', self._conts[-1])
 
     def _let(self, n: LetStmt):
+        # The initializer sees the previous binding when this is a shadowing let.
+        v = self._expr(n.init_expr) if n.init_expr else None
+        target = self._declare(n.name)
         if n.init_expr:
-            v = self._expr(n.init_expr)
-            self._e(':=', v, '_', n.name)
+            self._e(':=', v, '_', target)
 
     def _assign(self, n: AssignStmt):
         val = self._expr(n.expr)
         lv  = n.lvalue
         if isinstance(lv, Identifier):
-            self._e(':=', val, '_', lv.name)
+            self._e(':=', val, '_', self._resolve(lv.name))
         elif isinstance(lv, UnaryOp) and lv.op == '*':
             ptr = self._expr(lv.operand)
             self._e('deref_write', ptr, val)
         elif isinstance(lv, IndexExpr):
             arr = self._expr(lv.base)
             idx = self._expr(lv.index)
+            self._emit_bounds(arr, idx)
             self._e('[]:=', arr, idx, val)
         elif isinstance(lv, TupleFieldExpr):
             tup = self._expr(lv.base)
@@ -186,44 +225,57 @@ class IRGen:
         self._breaks.pop(); self._conts.pop()
 
     def _for(self, n: ForStmt):
-        Ls = self._l(); Le = self._l()
-        self._breaks.append(Le); self._conts.append(Ls)
-
+        Ls = self._l(); Lcont = self._l(); Le = self._l()
+        self._breaks.append(Le); self._conts.append(Lcont)
+        # The iterable is evaluated before the loop variable is introduced.
         if isinstance(n.iterable, RangeExpr):
-            sv  = self._expr(n.iterable.start)
-            te  = self._t()
-            ev  = self._expr(n.iterable.end)
-            self._e(':=', ev, '_', te)
-            self._e(':=', sv, '_', n.var_name)
-            self._e('label', '_', '_', Ls)
-            tc  = self._t()
-            self._e('<', n.var_name, te, tc)
-            self._e('if_false', tc, '_', Le)
-            for s in n.body.stmts:  self._stmt(s)
-            if n.body.tail_expr:    self._expr(n.body.tail_expr)
-            ti  = self._t()
-            self._e('+', n.var_name, '1', ti)
-            self._e(':=', ti, '_', n.var_name)
-            self._e('goto', '_', '_', Ls)
+            sv = self._expr(n.iterable.start)
+            ev = self._expr(n.iterable.end)
+            arr = None
         else:
+            sv = ev = None
             arr = self._expr(n.iterable)
-            tl  = self._t(); tidx = self._t()
-            self._e('arr_len', arr, '_', tl)
-            self._e(':=', '0', '_', tidx)
-            self._e('label', '_', '_', Ls)
-            tc2 = self._t()
-            self._e('<', tidx, tl, tc2)
-            self._e('if_false', tc2, '_', Le)
-            self._e('[]', arr, tidx, n.var_name)
-            for s in n.body.stmts:  self._stmt(s)
-            if n.body.tail_expr:    self._expr(n.body.tail_expr)
-            ti2 = self._t()
-            self._e('+', tidx, '1', ti2)
-            self._e(':=', ti2, '_', tidx)
-            self._e('goto', '_', '_', Ls)
+        self._push_scope()
+        try:
+            loop_var = self._declare(n.var_name)
+            if isinstance(n.iterable, RangeExpr):
+                te  = self._t()
+                self._e(':=', ev, '_', te)
+                self._e(':=', sv, '_', loop_var)
+                self._e('label', '_', '_', Ls)
+                tc  = self._t()
+                self._e('<', loop_var, te, tc)
+                self._e('if_false', tc, '_', Le)
+                self._block(n.body)
+                self._e('label', '_', '_', Lcont)
+                ti  = self._t()
+                self._e('+', loop_var, '1', ti)
+                self._e(':=', ti, '_', loop_var)
+                self._e('goto', '_', '_', Ls)
+            else:
+                tl  = self._t(); tidx = self._t()
+                iter_type = getattr(n.iterable, '_sem_type', None)
+                if isinstance(iter_type, TypeArray):
+                    self._e(':=', str(iter_type.size), '_', tl)
+                else:
+                    self._e('arr_len', arr, '_', tl)
+                self._e(':=', '0', '_', tidx)
+                self._e('label', '_', '_', Ls)
+                tc2 = self._t()
+                self._e('<', tidx, tl, tc2)
+                self._e('if_false', tc2, '_', Le)
+                self._e('[]', arr, tidx, loop_var)
+                self._block(n.body)
+                self._e('label', '_', '_', Lcont)
+                ti2 = self._t()
+                self._e('+', tidx, '1', ti2)
+                self._e(':=', ti2, '_', tidx)
+                self._e('goto', '_', '_', Ls)
 
-        self._e('label', '_', '_', Le)
-        self._breaks.pop(); self._conts.pop()
+            self._e('label', '_', '_', Le)
+        finally:
+            self._pop_scope()
+            self._breaks.pop(); self._conts.pop()
 
     def _loop_stmt(self, n: LoopStmt):
         Ls = self._l(); Le = self._l()
@@ -237,12 +289,34 @@ class IRGen:
 
     # ── expressions ───────────────────────────────────────────────────────────
 
+    def _address(self, node, mutable=False) -> str:
+        """Generate an address for every legal lvalue/reference target."""
+        if isinstance(node, Identifier):
+            t = self._t()
+            self._e('&mut' if mutable else '&', self._resolve(node.name), '_', t)
+            return t
+        if isinstance(node, IndexExpr):
+            base = self._expr(node.base)
+            idx = self._expr(node.index)
+            self._emit_bounds(base, idx)
+            t = self._t()
+            self._e('index_addr', base, idx, t)
+            return t
+        if isinstance(node, TupleFieldExpr):
+            base = self._expr(node.base)
+            t = self._t()
+            self._e('field_addr', base, str(node.field), t)
+            return t
+        if isinstance(node, UnaryOp) and node.op == '*':
+            return self._expr(node.operand)
+        return '_'
+
     def _expr(self, node) -> str:
         if isinstance(node, NumLiteral):
             return str(node.value)
 
         if isinstance(node, Identifier):
-            return node.name
+            return self._resolve(node.name)
 
         if isinstance(node, BinaryOp):
             L = self._expr(node.left)
@@ -252,18 +326,19 @@ class IRGen:
             return t
 
         if isinstance(node, UnaryOp):
+            op = node.op
+            if op in ('&', '&mut'):
+                return self._address(node.operand, mutable=(op == '&mut'))
             v = self._expr(node.operand)
             t = self._t()
-            op = node.op
-            if   op == '-':    self._e('neg',    v, '_', t)
-            elif op == '&':    self._e('&',      v, '_', t)
-            elif op == '&mut': self._e('&mut',   v, '_', t)
-            elif op == '*':    self._e('deref',  v, '_', t)
+            if   op == '-': self._e('neg',   v, '_', t)
+            elif op == '*': self._e('deref', v, '_', t)
             return t
 
         if isinstance(node, IndexExpr):
             arr = self._expr(node.base)
             idx = self._expr(node.index)
+            self._emit_bounds(arr, idx)
             t   = self._t()
             self._e('[]', arr, idx, t)
             return t
